@@ -1,0 +1,85 @@
+# Docker ignore file
+
+# Git specific
+.git
+.gitignore
+
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Caches
+.cache
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data (pids, etc.)
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+.nyc_output
+
+# Build output
+build/
+dist/
+out/
+.next/
+.nuxt/
+# public # Uncomment if using Gatsby and it's not part of source
+.vuepress/dist
+.temp
+.docusaurus/
+
+# Serverless specific
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# Local DB files
+.dynamodb/
+
+# REPL history
+.node_repl_history
+
+# Packed archives
+*.tgz
+
+# Environment files (should not be in the image)
+.env
+.env.*
+*.env
+
+# IDE & OS specific
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local data directory (this will be a volume)
+data/

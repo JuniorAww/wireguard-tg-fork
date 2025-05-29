@@ -1,0 +1,34 @@
+[
+    {
+        "id": "macos_laptop",
+        "name": "Ноутбук (macOS)"
+    },
+    {
+        "id": "linux_laptop",
+        "name": "Ноутбук (Linux)"
+    },
+    {
+        "id": "windows_laptop",
+        "name": "Ноутбук (Windows)"
+    },
+    {
+        "id": "android_phone",
+        "name": "Телефон (Android)"
+    },
+    {
+        "id": "ios_phone",
+        "name": "Телефон (iOS)"
+    },
+    {
+        "id": "tv",
+        "name": "Телевизор (Smart TV)"
+    },
+    {
+        "id": "router",
+        "name": "Роутер"
+    },
+    {
+        "id": "other",
+        "name": "Другое устройство"
+    }
+]

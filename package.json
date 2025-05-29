@@ -1,0 +1,16 @@
+{
+  "name": "wireguard-tg",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run src/bot.ts",
+    "dev": "bun --watch src/bot.ts"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "sharp": "^0.34.2"
+  },
+  "devDependencies": {
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "typescript": "^5.0.0"
+  }
+}

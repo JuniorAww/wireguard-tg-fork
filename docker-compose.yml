@@ -1,0 +1,51 @@
+volumes:
+  etc_wireguard:
+
+services:
+  wg-easy:
+    environment:
+       - LANG=ru
+       - INIT_ENABLED=true
+       - WG_HOST=${WG_HOST}
+
+    image: ghcr.io/wg-easy/wg-easy:14
+    container_name: wg-easy
+    networks:
+      wg:
+        ipv4_address: 10.42.42.42
+    volumes:
+      - etc_wireguard:/etc/wireguard
+    ports:
+      - "51820:51820/udp"
+    # Порт 51821/tcp (веб-интерфейс)
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wg-bot
+    restart: unless-stopped
+    networks:
+      - wg
+    env_file:
+      - .env
+    depends_on:
+      - wg-easy
+    volumes:
+      - ./data:/app/data
+
+networks:
+  wg:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.42.42.0/24
