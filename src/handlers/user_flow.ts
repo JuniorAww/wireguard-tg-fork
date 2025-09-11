@@ -62,7 +62,7 @@ export async function showMainMenu(chatId: number, userId: number) {
         keyboard.push([{ text: "👑 Админ-панель" }]);
     }
     
-    const hourStats = `\n\n📊 <b>За последний час</b> скачано ${toMB(lastHourUsage.tx)}, загружено ${toMB(lastHourUsage.rx)}`
+    const hourStats = `\n\n📊<b>За последний час</b> скачано ${toMB(lastHourUsage.tx)}, загружено ${toMB(lastHourUsage.rx)}`
 
     await botInstance.sendMessage(chatId, "🌟 <b>Главное меню</b>" + hourStats, {
         reply_markup: {
@@ -297,7 +297,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     
     /* Немного статистики */
     const [ totalRx, totalTx ] = getTotalBandwidthUsage(configs)
-    messageText += `\n\n📊 Всего скачано ${toMB(totalTx)}, отправлено ${toMB(totalRx)}`
+    messageText += `\n📊 Всего скачано ${toMB(totalTx)}, отправлено ${toMB(totalRx)}`
     
     const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
     if (currentPage > 0) {

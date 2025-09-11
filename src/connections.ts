@@ -1,4 +1,4 @@
-import { ConnectionInfo } from './types';
+import { ConnectionInfo, UserConfig } from './types';
 import { listWgClients } from './wg_easy_api';
 import { logActivity } from './logger';
 
@@ -44,11 +44,11 @@ export function getWgConnectionInfo(clientId: string): Promise<ConnectionInfo | 
     return connectionInfo[clientId] || null;
 }
 
-export function getTotalBandwidthUsage(clientIds: string[]): Promise<number[] | null> {
+export function getTotalBandwidthUsage(configs: UserConfig[]): Promise<number[] | null> {
     logActivity(`Fetching total bandwidth usage`);
     let rx = 0; let tx = 0;
-    for(const clientId of clientIds) {
-        const client = connectionInfo[clientId]
+    for(const config of configs) {
+        const client = connectionInfo[config.wgEasyClientId]
         if(!client) continue;
         rx += client.transferRx;
         tx += client.transferTx;
