@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { User, Device, AppConfig } from '../types';
 import * as db from '../db';
 import * as wgAPI from '../wg_easy_api';
-import { getWgConnectionInfo } from '../connections';
+import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '../connections';
 import { logActivity } from '../logger';
 
 let botInstance: TelegramBot;
@@ -61,13 +61,16 @@ export async function showMainMenu(chatId: number, userId: number) {
     if (isAdmin) {
         keyboard.push([{ text: "👑 Админ-панель" }]);
     }
+    
+    const hourStats = `\n\n📊 <b>За последний час</b> скачано ${toMB(lastHourUsage.tx)}, загружено ${toMB(lastHourUsage.rx)}`
 
-    await botInstance.sendMessage(chatId, "🌟 Главное меню", {
+    await botInstance.sendMessage(chatId, "🌟 <b>Главное меню</b>" + hourStats, {
         reply_markup: {
             keyboard: keyboard,
             resize_keyboard: true,
             one_time_keyboard: false
-        }
+        },
+        parse_mode: 'HTML'
     });
 }
 
@@ -252,28 +255,31 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     const ITEMS_PER_PAGE = 10;
     const totalPages = Math.ceil(configs.length / ITEMS_PER_PAGE);
     const currentPage = Math.max(0, Math.min(page, totalPages - 1));
-
+    
     const startIndex = currentPage * ITEMS_PER_PAGE;
     const endIndex = startIndex + ITEMS_PER_PAGE;
     const pageConfigs = configs.slice(startIndex, endIndex);
-
-    let messageText = `📄 Ваши конфигурации (Страница ${currentPage + 1}/${totalPages}):\n\n`;
+    
+    let messageText = `📄 <b>Ваши конфигурации</b> (Страница ${currentPage + 1}/${totalPages}):\n\n`;
     const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [];
     
     let itemsInCurrentRow = 0;
     let currentRowSymbolsLength = 0;
     let currentRow = [];
-
+    
     pageConfigs.forEach((config, index) => {
         const globalIndex = startIndex + index;
         const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
-        messageText += `${globalIndex + 1}. ${config.userGivenName} (${deviceName}) - ${config.isEnabled ? "Активен" : "Отключен"}\n`;
+        const bytes_sent = getWgConnectionInfo(config.wgEasyClientId)?.transferTx || 0
+        const symbol = !config.isEnabled ? '❌' : bytes_sent > 0 ? '✅' : '💤';
+        messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName})\n`;
         
         const button = { text: `${config.userGivenName}`, callback_data: `view_config_${config.wgEasyClientId}` }
         const userGivenLength = config.userGivenName.length
         
+        /* Группируем кнопки в одну строчку */
         if(itemsInCurrentRow === 3 || (currentRowSymbolsLength + userGivenLength) >= 35) {
-            inline_keyboard.push(currentRow)
+            if(currentRow.length > 0) inline_keyboard.push(currentRow)
             
             itemsInCurrentRow = 1
             currentRowSymbolsLength = userGivenLength
@@ -288,12 +294,16 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     
     /* Завершаем клавиатуру */
     inline_keyboard.push(currentRow)
-
+    
+    /* Немного статистики */
+    const [ totalRx, totalTx ] = getTotalBandwidthUsage(configs)
+    messageText += `\n\n📊 Всего скачано ${toMB(totalTx)}, отправлено ${toMB(totalRx)}`
+    
     const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `list_my_configs_page_${currentPage - 1}` });
     }
-    paginationButtons.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "noop" }); 
+    paginationButtons.push({ text: `🦊 ${currentPage + 1} / ${totalPages} 🦊`, callback_data: "noop" }); 
                                                                       // noop - ничего не делать
     if (currentPage < totalPages - 1) {
         paginationButtons.push({ text: "➡️", callback_data: `list_my_configs_page_${currentPage + 1}` });
@@ -312,17 +322,20 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
             await botInstance.editMessageText(messageText, {
                 chat_id: chatId,
                 message_id: userState.data.messageId,
+                parse_mode: 'HTML',
                 reply_markup: { inline_keyboard }
             });
         } catch (e) {
-            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
+            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
             db.updateUser(userId, { state: { action: 'viewing_config_list', data: { messageId: sentMessage.message_id } } });
         }
     } else {
-        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
+        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
         db.updateUser(userId, { state: { action: 'viewing_config_list', data: { messageId: sentMessage.message_id } } });
     }
 }
+
+const toMB = b => (b / 1024 / 1024).toFixed(1) + ' МБ';
 
 export async function handleViewConfig(chatId: number, userId: number, wgEasyClientId: string) {
     const user = db.getUser(userId);
@@ -339,16 +352,22 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
     
     const conInfo = getWgConnectionInfo(wgEasyClientId);
-    const toMb = b => (b / 1024 / 1024).toFixed(1)
     const bandwidth = !conInfo ? 
                       "нет статистики" : 
-                      `${toMb(conInfo.transferRx)} скачано, ${toMb(conInfo.transferTx)} отправлено`
-
+                      `${toMB(conInfo.transferTx)} скачано, ${toMB(conInfo.transferRx)} отправлено`
+    
+    let usedLastDay = false;
+    if(conInfo?.latestHandshakeAt) {
+        const usedAt = new Date(conInfo.latestHandshakeAt);
+        usedLastDay = Date.now() - new Date(conInfo.latestHandshakeAt) < 24 * 60 * 60 * 1000;
+    }
+    const status = !config.isEnabled ? '❌ Отключен' : usedLastDay ? '✅ Активен' : '💤 Не использовался последние 24 часа';
+    
     let text = `ℹ️ <b>Детали конфигурации:</b>\n`;
     text += `<b>Имя:</b> ${config.userGivenName}\n`;
     text += `<b>Устройство:</b> ${deviceName}\n`;
     text += `<b>Создан:</b> ${creationDate}\n`;
-    text += `<b>Статус:</b> ${config.isEnabled ? "✅ Активен" : "🚫 Отключен"}\n`;
+    text += `<b>Статус:</b> ${status}\n`;
     text += `<b>Трафик:</b> ${bandwidth}\n`
     text += `<b>ID (wg-easy):</b> <tg-spoiler>${config.wgEasyClientId}</tg-spoiler>`;
 

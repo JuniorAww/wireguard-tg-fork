@@ -6,11 +6,20 @@ import { logActivity } from './logger';
 // TODO общая статистика трафика
 
 let connectionInfo: Record<string, ConnectionInfo> = {};
+let lastHourUsage = { rx: 0, tx: 0 };
 
 const updateConnectionInfos = async () => {
     const clients = await listWgClients() || []
     let clientIds: string[] = []
     clients.forEach(client => {
+        /* Небольшая запись статистики для /start */
+        const entry = connectionInfo[client.id]
+        if(entry !== undefined) {
+            lastHourUsage.rx += (client.transferRx - entry.transferRx)
+            lastHourUsage.tx += (client.transferTx - entry.transferTx)
+        }
+        
+        /* Записываем кеш */
         connectionInfo[client.id] = {
             transferRx: client.transferRx,
             transferTx: client.transferTx,
@@ -28,7 +37,21 @@ const updateConnectionInfos = async () => {
 setInterval(updateConnectionInfos, 30000);
 setTimeout(updateConnectionInfos, 5000);
 
+export { lastHourUsage };
+
 export function getWgConnectionInfo(clientId: string): Promise<ConnectionInfo | null> {
     logActivity(`Fetching connection info for client ${clientId}`);
     return connectionInfo[clientId] || null;
+}
+
+export function getTotalBandwidthUsage(clientIds: string[]): Promise<number[] | null> {
+    logActivity(`Fetching total bandwidth usage`);
+    let rx = 0; let tx = 0;
+    for(const clientId of clientIds) {
+        const client = connectionInfo[clientId]
+        if(!client) continue;
+        rx += client.transferRx;
+        tx += client.transferTx;
+    }
+    return [ rx, tx ]
 }
