@@ -11,6 +11,12 @@ export interface UserConfig {
     isEnabled: boolean;
 }
 
+export interface ConnectionInfo {
+    transferTx: number;
+    transferRx: number;
+    latestHandshakeAt: string // ISO timestamp
+}
+
 export interface User {
     id: number; // Telegram User ID
     username?: string;

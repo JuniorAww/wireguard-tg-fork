@@ -6,6 +6,7 @@ let appConfig: AppConfig;
 
 export function initWgEasyApi(config: AppConfig) {
     appConfig = config;
+    console.log(config)
 }
 
 async function fetchWgEasy(endpoint: string, options: RequestInit = {}) {

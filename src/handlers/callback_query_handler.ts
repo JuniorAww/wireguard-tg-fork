@@ -32,6 +32,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             return;
         }
         if (data.startsWith('approve_access_')) {
+            console.log(userId, appConfigInstance)
             if (userId !== appConfigInstance.adminTelegramId) {
                 await botInstance.answerCallbackQuery(query.id, { text: "Это действие доступно только администратору." });
                 return;

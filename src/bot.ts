@@ -11,7 +11,10 @@ import { initAdminFlow, handleAdminCommand } from './handlers/admin_flow';
 import { initCallbackQueryHandler, handleCallbackQuery } from './handlers/callback_query_handler';
 import { logActivity } from './logger';
 
-// --- Конфигурация устройств (из файла) ---
+/* =================================
+ Конфигурация устройств - из файла
+================================= */
+
 const devicesPath = path.join(process.cwd(), 'config', 'devices.json');
 if (!fs.existsSync(devicesPath)) {
   console.error(`FATAL: Devices file not found at ${devicesPath}`);
@@ -21,19 +24,37 @@ if (!fs.existsSync(devicesPath)) {
 export const devices: Device[] = JSON.parse(fs.readFileSync(devicesPath, 'utf-8'));
 logActivity("Device configuration loaded from config/devices.json.");
 
-// --- Загрузка конфигурации из переменных окружения ---
+/* =============================================
+ Загрузка конфигурации из переменных окружения
+============================================= */
+
 const telegramBotToken = process.env.BOT_TOKEN;
 const adminTelegramId = process.env.ADMIN_TELEGRAM_ID;
 const wgEasyApiUrl = process.env.WG_EASY_API_URL;
 
+if (!telegramBotToken || !adminTelegramId || !wgEasyApiUrl) {
+    const missing = [
+        !telegramBotToken && "BOT_TOKEN",
+        !adminTelegramId && "ADMIN_TELEGRAM_ID",
+        !wgEasyApiUrl && "WG_EASY_API_URL"
+    ].filter(Boolean).join(', ')
+    const errorMessage = `FATAL: Missing required environment variables: ${missing}. Please check your .env file.`;
+    console.error(errorMessage);
+    logActivity(errorMessage);
+    process.exit(1);
+}
+
 const appConfig: AppConfig = {
     telegramBotToken,
-    adminTelegramId,
+    adminTelegramId: parseInt(adminTelegramId, 10),
     wgEasyApiUrl
 };
 logActivity("Application configuration loaded from environment variables.");
 
-// --- Инициализация ---
+/* =============
+ Инициализация
+============= */
+
 db.loadDb();
 initWgEasyApi(appConfig);
 
@@ -49,7 +70,10 @@ console.log(`Admin ID: ${appConfig.adminTelegramId}`);
 console.log(`wg-easy API URL: ${appConfig.wgEasyApiUrl}`);
 
 
-// --- Обработчики команд ---
+/* ============
+ Общие команды
+============ */
+
 bot.onText(/\/start/, async (msg) => {
     logActivity(`Received /start command from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
     await handleStart(msg);
@@ -86,7 +110,10 @@ bot.onText(/👑 Админ-панель/, async (msg) => {
     }
 });
 
-// Админка
+/* ==============
+ Команды админа
+============== */
+
 bot.onText(/👥 Пользователи/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '👥 Пользователи'`);
@@ -136,7 +163,11 @@ bot.onText(/\/cancel/, async (msg) => {
     }
 });
 
-// --- Обработчик текстовых сообщений (для ввода имени конфига) ---
+/* ==============================
+ Обработчик текстовых сообщений 
+       (для ввода имени конфига)
+============================== */
+
 bot.on('message', async (msg) => {
     const userId = msg.from!.id;
     if (!userId) return;
@@ -166,13 +197,13 @@ bot.on('message', async (msg) => {
 });
 
 
-// --- Обработчик нажатий на inline-кнопки ---
+/* *** Обработчик нажатий на inline-кнопки *** */
 bot.on('callback_query', async (query) => {
     await handleCallbackQuery(query);
 });
 
 
-// --- Обработка ошибок ---
+/* *** Обработка ошибок *** */
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.message);
     logActivity(`Polling error: ${error.code} - ${error.message}`);
@@ -183,16 +214,12 @@ bot.on('webhook_error', (error) => {
     logActivity(`Webhook error: ${error.code} - ${error.message}`);
 });
 
-process.on('SIGINT', () => {
-    logActivity('Bot shutting down (SIGINT)...');
-    db.saveDb();
-    console.log('Database saved. Exiting.');
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
+const exit = reason => {
     logActivity('Bot shutting down (SIGTERM)...');
     db.saveDb();
     console.log('Database saved. Exiting.');
     process.exit(0);
-});
+}
+
+process.on('SIGINT', () => exit('SIGINT'));
+process.on('SIGTERM', () => exit('SIGTERM'));
