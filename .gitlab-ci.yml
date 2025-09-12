@@ -1,0 +1,48 @@
+stages:
+  - test
+  - deploy
+  - verify
+
+variables:
+  APP_PATH: "/opt/wireguard-tg"
+
+lint:test:
+  stage: test
+  image: oven/bun:1
+  script:
+    - bun install --frozen-lockfile
+    - bun run lint
+  allow_failure: true
+
+deploy:
+  stage: deploy
+  tags:
+    - deploy-server
+  script:
+    - cp -r ./* $APP_PATH/
+    - cd $APP_PATH
+    - echo "WG_HOST=${WG_HOST}" > .env
+    - echo "BOT_TOKEN=${BOT_TOKEN}" >> .env
+    - echo "ADMIN_TELEGRAM_ID=${ADMIN_TELEGRAM_ID}" >> .env
+    - echo "WG_EASY_API_URL=${WG_EASY_API_URL}" >> .env
+    - docker compose up --build -d
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+  when: manual
+  allow_failure: false
+
+verify:deploy:
+  stage: verify
+  tags:
+    - deploy-server
+  script:
+    - |
+      if [ $(docker ps -q -f name=wg-bot -f status=running) ]; then
+        echo 'Контейнер wg-bot успешно запущен.'
+        exit 0
+      else
+        echo 'ОШИБКА: Контейнер wg-bot не найден или не запущен.'
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
