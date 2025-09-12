@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "start": "bun run src/bot.ts",
-    "dev": "bun --watch src/bot.ts"
+    "dev": "bun --watch src/bot.ts",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",

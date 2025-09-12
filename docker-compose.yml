@@ -1,5 +1,6 @@
 volumes:
   etc_wireguard:
+  bot_data:
 
 services:
   wg-easy:
@@ -39,7 +40,7 @@ services:
     depends_on:
       - wg-easy
     volumes:
-      - ./data:/app/data
+      - bot_data:/app/data
 
 networks:
   wg:
