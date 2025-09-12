@@ -6,7 +6,7 @@ stages:
 variables:
   APP_PATH: "/opt/wireguard-tg"
 
-lint-test:
+lint:test:
   stage: test
   image: oven/bun:1
   script:
@@ -28,8 +28,10 @@ deploy:
     - docker compose up --build -d
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+  when: manual
+  allow_failure: false
 
-verify-deploy:
+verify:deploy:
   stage: verify
   tags:
     - deploy-server
