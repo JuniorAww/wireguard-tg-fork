@@ -1,9 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { User, AppConfig, UserConfig } from '../types';
 import * as db from '../db';
-import * as wgAPI from '../wg_easy_api';
 import { logActivity } from '../logger';
-import { showMainMenu as showUserMainMenu } from './user_flow';
 import { devices } from '../bot';
 
 let botInstance: TelegramBot;
@@ -13,6 +11,8 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
     botInstance = bot;
     appConfigInstance = appCfg;
 }
+
+const toMB = (b: number) => ((b || 0) / 1024 / 1024).toFixed(1) + ' МБ';
 
 export async function handleAdminCommand(msg: TelegramBot.Message) {
     const chatId = msg.chat.id;
@@ -104,16 +104,6 @@ export async function handleDenyAccess(adminChatId: number, userIdToDeny: number
     }
 }
 
-
-// TODO: Реализовать остальные функции администратора:
-// - admin_list_users_page_0: Пагинированный список пользователей с доступом.
-//   - Кнопки для просмотра деталей пользователя (его конфиги, дата доступа).
-//   - Возможность отозвать доступ.
-// - admin_list_all_configs_page_0: Пагинированный список всех конфигов всех пользователей.
-//   - Кнопки для просмотра деталей конфига.
-//   - Возможность отключить/включить/удалить любой конфиг.
-// - admin_view_logs: Показать последние N записей из файла логов.
-
 export async function handleAdminListUsers(chatId: number, page: number) {
     const usersWithAccess = db.getAllUsersWithAccess().filter(u => u.id !== appConfigInstance.adminTelegramId);
     const ITEMS_PER_PAGE = 10;
@@ -204,8 +194,10 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
     pageConfigs.forEach((config, indexOnPage) => {
         const globalIndex = startIndex + indexOnPage;
         const ownerIdentifier = config.ownerUsername ? `@${config.ownerUsername}` : `ID: ${config.ownerId}`;
-        const status = config.isEnabled ? "Активен" : "Отключен";
-        messageText += `\n- "${config.userGivenName}" (Владелец: ${ownerIdentifier}, Статус: ${status})`;
+        const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
+        const statusIcon = config.isEnabled ? '✅' : '❌';
+
+        messageText += `\n${statusIcon} <b>"${config.userGivenName}"</b> (от ${ownerIdentifier}, трафик: ${toMB(totalTraffic)})`;
         inline_keyboard.push([{ text: `"${config.userGivenName}" от ${ownerIdentifier}`, callback_data: `admin_view_cfg_idx_${globalIndex}` }]);
     });
 
@@ -230,15 +222,16 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
         try {
             await botInstance.editMessageText(messageText, {
                 chat_id: chatId,
+                parse_mode: 'HTML',
                 message_id: adminState.data.messageId,
                 reply_markup: { inline_keyboard }
             });
         } catch (e) {
-            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
+            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
             db.updateUser(chatId, { state: { action: 'admin_viewing_all_configs', data: { messageId: sentMessage.message_id } } });
         }
     } else {
-        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
+        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
         db.updateUser(chatId, { state: { action: 'admin_viewing_all_configs', data: { messageId: sentMessage.message_id } } });
     }
 
@@ -285,7 +278,10 @@ export async function handleAdminViewUser(chatId: number, userIdToView: number) 
 
     if (user.configs.length > 0) {
         user.configs.forEach(config => {
-            messageText += `  - "${config.userGivenName}" (ID: ${config.wgEasyClientId}, ${config.isEnabled ? "Активен" : "Отключен"})\n`;
+            const totalTx = config.totalTx || 0;
+            const totalRx = config.totalRx || 0;
+            const statusIcon = config.isEnabled ? '✅' : '❌';
+            messageText += `  ${statusIcon} "${config.userGivenName}" (скачано: ${toMB(totalTx)}, отправлено: ${toMB(totalRx)})\n`;
         });
     } else {
         messageText += `  У пользователя нет конфигураций.\n`;
@@ -355,12 +351,18 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
     const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
     const ownerIdentifier = owner.username ? `@${owner.username}` : `ID ${owner.id}`;
 
-    let text = `👑 Админ: Детали конфигурации\n`;
+    let text = `👑 Админ: Детали конфигурации\n\n`;
     text += `Имя: "${config.userGivenName}"\n`;
     text += `Владелец: ${ownerIdentifier} (ID: ${ownerId})\n`;
     text += `Устройство: ${deviceName} (ID: ${config.deviceId})\n`;
     text += `Создан: ${creationDate}\n`;
-    text += `Статус: ${config.isEnabled ? "✅ Активен" : "🚫 Отключен"}\n`;
+    text += `Статус: ${config.isEnabled ? "✅ Активен" : "❌ Отключен"}\n`;
+
+    const totalTx = config.totalTx || 0;
+    const totalRx = config.totalRx || 0;
+    const bandwidth = `${toMB(totalTx)} скачано, ${toMB(totalRx)} отправлено`;
+    text += `Трафик: ${bandwidth}\n`;
+
     text += `Клиент ID (wg-easy): ${config.wgEasyClientId}`;
 
     const allConfigs = db.getAllConfigs();
@@ -387,7 +389,7 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
         ]
     ];
 
-    await botInstance.sendMessage(adminChatId, text, { reply_markup: { inline_keyboard } });
+    await botInstance.sendMessage(adminChatId, text, { parse_mode: 'HTML', reply_markup: { inline_keyboard } });
 }
 
 // Действия с конфигурациями от имени администратора (скачивание, QR, вкл/выкл, удаление)
@@ -395,6 +397,9 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
 // и будут принимать ownerId.
 // userFlow.handleConfigAction, вызывая соответствующие wgAPI функции
 // и обновляя состояние конфига в db.updateUser(ownerId, ...).
+
+import * as userFlow from './user_flow';
+import * as wgAPI from '../wg_easy_api';
 
 export async function handleAdminConfigAction(adminChatId: number, actionWithPrefix: string, configIdentifier: string) {
     const allConfigs = db.getAllConfigs();
@@ -404,7 +409,7 @@ export async function handleAdminConfigAction(adminChatId: number, actionWithPre
     let owner: User | undefined;
     let config: UserConfig | undefined;
 
-    const action = actionWithPrefix.replace('admin_', '').replace('_cfg_idx', ''); // e.g. dl_config, disable, delete_ask
+    const action = actionWithPrefix.replace('admin_', '').replace(/_cfg_idx$/, ''); // e.g. dl_config, disable, delete_ask
 
     if (actionWithPrefix.includes('_cfg_idx_')) {
         const globalIndex = parseInt(configIdentifier);
@@ -434,11 +439,6 @@ export async function handleAdminConfigAction(adminChatId: number, actionWithPre
     if (!owner || !config) return;
 
     logActivity(`Admin ${adminChatId} performing action '${action}' on config ${wgEasyClientId} of user ${ownerId}`);
-
-    // Адаптируем логику из userFlow.handleConfigAction
-    // Важно: после каждого успешного изменения конфига (enable/disable/delete_confirm)
-    // нужно вызывать handleAdminViewConfig(adminChatId, ownerId, wgEasyClientId)
-    // чтобы обновить сообщение с деталями.
 
     // Пример для disable:
     if (action === 'disable') {

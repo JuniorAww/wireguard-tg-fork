@@ -269,10 +269,11 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     
     pageConfigs.forEach((config, index) => {
         const globalIndex = startIndex + index;
-        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
-        const bytes_sent = getWgConnectionInfo(config.wgEasyClientId)?.transferTx || 0
+        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';        
+        const bytes_sent = (getWgConnectionInfo(config.wgEasyClientId)?.transferTx || 0) > 0 || (config.totalTx || 0) > 0;
         const symbol = !config.isEnabled ? '❌' : bytes_sent > 0 ? '✅' : '💤';
-        messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName})\n`;
+        const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
+        messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${toMB(totalTraffic)})\n`;
         
         const button = { text: `${config.userGivenName}`, callback_data: `view_config_${config.wgEasyClientId}` }
         const userGivenLength = config.userGivenName.length
@@ -303,8 +304,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `list_my_configs_page_${currentPage - 1}` });
     }
-    paginationButtons.push({ text: `🦊 ${currentPage + 1} / ${totalPages} 🦊`, callback_data: "noop" }); 
-                                                                      // noop - ничего не делать
+    paginationButtons.push({ text: `${currentPage + 1} / ${totalPages}`, callback_data: "noop" }); // noop - ничего не делать
     if (currentPage < totalPages - 1) {
         paginationButtons.push({ text: "➡️", callback_data: `list_my_configs_page_${currentPage + 1}` });
     }
@@ -352,24 +352,24 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
     
     const conInfo = getWgConnectionInfo(wgEasyClientId);
-    const bandwidth = !conInfo ? 
-                      "нет статистики" : 
-                      `${toMB(conInfo.transferTx)} скачано, ${toMB(conInfo.transferRx)} отправлено`
+    const totalTx = config.totalTx || 0;
+    const totalRx = config.totalRx || 0;
+    const bandwidth = `${toMB(totalTx)} скачано, ${toMB(totalRx)} отправлено`;
     
     let usedLastDay = false;
     if(conInfo?.latestHandshakeAt) {
         const usedAt = new Date(conInfo.latestHandshakeAt);
-        usedLastDay = Date.now() - new Date(conInfo.latestHandshakeAt) < 24 * 60 * 60 * 1000;
+        usedLastDay = Date.now() - usedAt.getTime() < 24 * 60 * 60 * 1000;
     }
     const status = !config.isEnabled ? '❌ Отключен' : usedLastDay ? '✅ Активен' : '💤 Не использовался последние 24 часа';
     
-    let text = `ℹ️ <b>Детали конфигурации:</b>\n`;
+    let text = `ℹ️ <b>Детали конфигурации:</b>\n\n`;
     text += `<b>Имя:</b> ${config.userGivenName}\n`;
     text += `<b>Устройство:</b> ${deviceName}\n`;
     text += `<b>Создан:</b> ${creationDate}\n`;
     text += `<b>Статус:</b> ${status}\n`;
     text += `<b>Трафик:</b> ${bandwidth}\n`
-    text += `<b>ID (wg-easy):</b> <tg-spoiler>${config.wgEasyClientId}</tg-spoiler>`;
+    text += `<b>ID (wg-easy):</b> ${config.wgEasyClientId}`;
 
 
     const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
@@ -392,7 +392,7 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     await botInstance.sendMessage(chatId, text, { parse_mode: 'HTML', reply_markup: { inline_keyboard } });
 }
 
-export async function handleConfigAction(chatId: number, userId: number, action: string, wgEasyClientId: string) {
+export async function handleConfigAction(chatId: number, userId: number, action: string, wgEasyClientId: string, isAdminAction: boolean = false) {
     const user = db.getUser(userId);
     if (!user) return;
 
@@ -404,6 +404,13 @@ export async function handleConfigAction(chatId: number, userId: number, action:
     const config = user.configs[configIndex];
 
     try {
+        const refreshView = async () => {
+            if (isAdminAction) {
+                await adminFlow.handleAdminViewConfig(chatId, userId, wgEasyClientId);
+            } else {
+                await handleViewConfig(chatId, userId, wgEasyClientId);
+            }
+        };
         switch (action) {
             case 'dl_config':
                 const fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
@@ -436,8 +443,8 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                     user.configs[configIndex].isEnabled = false;
                     db.updateUser(userId, { configs: user.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" отключена.` }); // callback_query_handler
-                    logActivity(`User ${userId} disabled config ${config.userGivenName} (ID: ${wgEasyClientId})`);
-                    await handleViewConfig(chatId, userId, wgEasyClientId);
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} disabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
+                    await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию.");
                 }
@@ -447,8 +454,8 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                     user.configs[configIndex].isEnabled = true;
                     db.updateUser(userId, { configs: user.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" включена.` }); // callback_query_handler
-                    logActivity(`User ${userId} enabled config ${config.userGivenName} (ID: ${wgEasyClientId})`);
-                    await handleViewConfig(chatId, userId, wgEasyClientId);
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} enabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
+                    await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось включить конфигурацию.");
                 }
@@ -457,8 +464,8 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                 await botInstance.sendMessage(chatId, `Вы уверены, что хотите удалить конфигурацию "${config.userGivenName}"? Это действие необратимо.`, {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: "🗑 Да, удалить", callback_data: `delete_config_confirm_${wgEasyClientId}` }],
-                            [{ text: "⬅️ Нет, отмена", callback_data: `view_config_${wgEasyClientId}` }]
+                            [{ text: "🗑 Да, удалить", callback_data: `${isAdminAction ? 'admin_' : ''}delete_config_confirm_${isAdminAction ? `${userId}_${wgEasyClientId}` : wgEasyClientId}` }],
+                            [{ text: "⬅️ Нет, отмена", callback_data: `${isAdminAction ? `admin_view_config_${userId}_${wgEasyClientId}` : `view_config_${wgEasyClientId}`}` }]
                         ]
                     }
                 });
@@ -468,8 +475,12 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                     user.configs.splice(configIndex, 1);
                     db.updateUser(userId, { configs: user.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" удалена.` }); // callback_query_handler
-                    await botInstance.sendMessage(chatId, `Конфигурация "${config.userGivenName}" удалена.`);
-                    logActivity(`User ${userId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId})`);
+                    await botInstance.sendMessage(chatId, `Конфигурация "${config.userGivenName}" удалена.`); // TODO: edit message instead of sending new one
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${userId}`);
+                    if (isAdminAction) {
+                        await adminFlow.handleAdminListAllConfigs(chatId, 0);
+                        return;
+                    }
                     await handleListMyConfigs(chatId, userId, 0);
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось удалить конфигурацию.");
