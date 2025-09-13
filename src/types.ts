@@ -9,6 +9,10 @@ export interface UserConfig {
     deviceId: string;
     createdAt: string; // ISO timestamp
     isEnabled: boolean;
+    totalRx?: number;
+    totalTx?: number;
+    lastKnownRx?: number;
+    lastKnownTx?: number;
 }
 
 export interface ConnectionInfo {

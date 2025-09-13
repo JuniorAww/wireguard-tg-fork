@@ -176,17 +176,22 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             return;
         }
         // Действия с конфигом от админа
-        const adminConfigActionMatch = data.match(/^(admin_(?:dl_config|qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm))_(?:(\d+)_([0-9a-fA-F-]+)|(?:cfg_idx_(\d+)))$/);
+        const adminConfigActionMatch = data.match(/^(admin_(?:dl_config|qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm))_(?:(\d+)_([0-9a-fA-F-]+)|cfg_idx_(\d+))$/);
         if (adminConfigActionMatch) {
             if (userId !== appConfigInstance.adminTelegramId) { await botInstance.answerCallbackQuery(query.id, { text: "Доступ запрещен." }); return; }
             const actionWithPrefix = adminConfigActionMatch[1]; // e.g., admin_dl_config
             let configIdentifier: string;
+            let ownerId: number;
+            let wgEasyClientId: string;
+
             if (adminConfigActionMatch[4] !== undefined) { // _cfg_idx_
-                configIdentifier = adminConfigActionMatch[4]; // globalIndex
+                const globalIndex = parseInt(adminConfigActionMatch[4]);
+                const allConfigs = db.getAllConfigs();
+                const targetConfig = allConfigs[globalIndex];
+                await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${targetConfig.ownerId}_${targetConfig.wgEasyClientId}`);
             } else { // ownerId_wgClientId
-                configIdentifier = `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`; // ownerId_wgClientId
+                await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`);
             }
-            await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, configIdentifier);
             if (!action.endsWith('_ask')) {
                 try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
             }
