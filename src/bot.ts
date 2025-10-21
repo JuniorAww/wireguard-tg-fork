@@ -206,15 +206,15 @@ bot.on('callback_query', async (query) => {
 /* *** Обработка ошибок *** */
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.message);
-    logActivity(`Polling error: ${error.code} - ${error.message}`);
+    logActivity(`Polling error: ${error.name} - ${error.message}`);
 });
 
 bot.on('webhook_error', (error) => {
     console.error('Webhook error:', error.message);
-    logActivity(`Webhook error: ${error.code} - ${error.message}`);
+    logActivity(`Webhook error: ${error.name} - ${error.message}`);
 });
 
-const exit = reason => {
+const exit = (reason: string) => {
     logActivity('Bot shutting down (SIGTERM)...');
     db.saveDb();
     console.log('Database saved. Exiting.');

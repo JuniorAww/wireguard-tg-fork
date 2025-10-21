@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Database, User, AccessRequest } from './types';
+import { Database, User, AccessRequest, UserConfig } from './types';
 import { logActivity } from './logger';
 
 const dbFilePath = path.join(process.cwd(), 'data', 'database.json');
