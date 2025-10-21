@@ -1,11 +1,11 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { User, Device, AppConfig, CallbackButton } from '../types';
-import * as db from '../db';
-import * as wgAPI from '../wg_easy_api';
-import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '../connections';
-import { logActivity } from '../logger';
-import { getUsageText, escapeConfigName } from '../utils'
-import { handleAdminViewConfig, handleAdminListAllConfigs } from './admin_flow'
+import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '$/api/connections';
+import { handleAdminViewConfig, handleAdminListAllConfigs } from '$/handlers/admin_flow'
+import { User, Device, AppConfig, CallbackButton } from '$/db/types';
+import { getUsageText, escapeConfigName } from '$/utils/text'
+import { logActivity } from '$/utils/logger';
+import * as wgAPI from '$/api/wg_easy_api';
+import * as db from '$/db';
 
 let botInstance: TelegramBot;
 let devices: Device[];
@@ -272,10 +272,18 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     pageConfigs.forEach((config, index) => {
         const globalIndex = startIndex + index;
         const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
+        
         const connectionInfo = getWgConnectionInfo(config.wgEasyClientId);
-        const transferTx = connectionInfo?.transferTx || 0;
-        const active = transferTx > 0 || (config.totalTx || 0) > 0;
-        const symbol = !config.isEnabled ? '❌' : active ? '✅' : '💤';
+        
+        let usedLastDay = false;
+        const latestHandshakeAt = connectionInfo?.latestHandshakeAt || config.latestHandshakeAt;
+        
+        if(latestHandshakeAt) {
+            const usedAt = new Date(latestHandshakeAt);
+            usedLastDay = Date.now() - usedAt.getTime() < 24 * 60 * 60 * 1000;
+        }
+        const symbol = !config.isEnabled ? '❌' : usedLastDay ? '✅' : '💤';
+        
         const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
         messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${getUsageText(totalTraffic)})\n`;
         
@@ -359,11 +367,13 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     const bandwidth = `${getUsageText(totalTx)} скачано, ${getUsageText(totalRx)} отправлено`;
     
     let usedLastDay = false;
-    if(conInfo?.latestHandshakeAt) {
-        const usedAt = new Date(conInfo.latestHandshakeAt);
+    const latestHandshakeAt = conInfo?.latestHandshakeAt || config.latestHandshakeAt;
+    console.log(conInfo, latestHandshakeAt)
+    if(latestHandshakeAt) {
+        const usedAt = new Date(latestHandshakeAt);
         usedLastDay = Date.now() - usedAt.getTime() < 24 * 60 * 60 * 1000;
     }
-    const status = !config.isEnabled ? '❌ Отключен' : usedLastDay ? '✅ Активен' : '💤 Не использовался последние 24 часа';
+    const status = !config.isEnabled ? '❌ Отключен' : usedLastDay ? '✅ Активен' : `💤 Не использовался последние 24 часа`;
     
     let text = `ℹ️ <b>Детали конфигурации:</b>\n\n`;
     text += `<b>Имя:</b> ${config.userGivenName}\n`;

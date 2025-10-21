@@ -1,6 +1,6 @@
-import { AppConfig } from './types';
-import { logActivity } from './logger';
 import sharp from 'sharp';
+import { AppConfig } from '$/db/types';
+import { logActivity } from '$/utils/logger';
 
 let appConfig: AppConfig;
 

@@ -13,6 +13,7 @@ export interface UserConfig {
     totalTx?: number;
     lastKnownRx?: number;
     lastKnownTx?: number;
+    latestHandshakeAt?: string | null;
 }
 
 export interface ConnectionInfo {
