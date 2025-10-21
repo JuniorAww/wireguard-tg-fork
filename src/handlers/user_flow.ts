@@ -4,6 +4,7 @@ import * as db from '../db';
 import * as wgAPI from '../wg_easy_api';
 import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '../connections';
 import { logActivity } from '../logger';
+import { getUsageText, escapeConfigName } from '../utils'
 
 let botInstance: TelegramBot;
 let devices: Device[];
@@ -62,7 +63,7 @@ export async function showMainMenu(chatId: number, userId: number) {
         keyboard.push([{ text: "👑 Админ-панель" }]);
     }
     
-    const hourStats = `\n\n📊<b>За последний час</b> скачано ${toMB(lastHourUsage.tx)}, загружено ${toMB(lastHourUsage.rx)}`
+    const hourStats = `\n\n📊<b>За последний час</b> скачано ${getUsageText(lastHourUsage.tx)}, загружено ${getUsageText(lastHourUsage.rx)}`
 
     await botInstance.sendMessage(chatId, "🌟 <b>Главное меню</b>" + hourStats, {
         reply_markup: {
@@ -202,7 +203,7 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
                 // @ts-ignore
                 contentType: 'text/plain',
             }, {
-                filename: `${configName.replace(/\s+/g, '_')}.conf`,
+                filename: `${escapeConfigName(configName)}.conf`,
                 contentType: 'text/plain',
             });
         } else {
@@ -273,7 +274,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
         const bytes_sent = (getWgConnectionInfo(config.wgEasyClientId)?.transferTx || 0) > 0 || (config.totalTx || 0) > 0;
         const symbol = !config.isEnabled ? '❌' : bytes_sent > 0 ? '✅' : '💤';
         const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
-        messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${toMB(totalTraffic)})\n`;
+        messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${getUsageText(totalTraffic)})\n`;
         
         const button = { text: `${config.userGivenName}`, callback_data: `view_config_${config.wgEasyClientId}` }
         const userGivenLength = config.userGivenName.length
@@ -298,7 +299,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     
     /* Немного статистики */
     const [ totalRx, totalTx ] = getTotalBandwidthUsage(configs)
-    messageText += `\n📊 Всего скачано ${toMB(totalTx)}, отправлено ${toMB(totalRx)}`
+    messageText += `\n📊 Всего скачано ${getUsageText(totalTx)}, отправлено ${getUsageText(totalRx)}`
     
     const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
     if (currentPage > 0) {
@@ -335,8 +336,6 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     }
 }
 
-const toMB = b => (b / 1024 / 1024).toFixed(1) + ' МБ';
-
 export async function handleViewConfig(chatId: number, userId: number, wgEasyClientId: string) {
     const user = db.getUser(userId);
     if (!user) return;
@@ -354,7 +353,7 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     const conInfo = getWgConnectionInfo(wgEasyClientId);
     const totalTx = config.totalTx || 0;
     const totalRx = config.totalRx || 0;
-    const bandwidth = `${toMB(totalTx)} скачано, ${toMB(totalRx)} отправлено`;
+    const bandwidth = `${getUsageText(totalTx)} скачано, ${getUsageText(totalRx)} отправлено`;
     
     let usedLastDay = false;
     if(conInfo?.latestHandshakeAt) {
@@ -416,7 +415,7 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                 const fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
                 if (typeof fileContent === 'string' && fileContent.length > 0) {
                     await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
-                        filename: `${config.userGivenName.replace(/\s+/g, '_')}.conf`,
+                        filename: `${escapeConfigName(config.userGivenName)}.conf`,
                         contentType: 'text/plain'
                     });
                     logActivity(`User ${userId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);

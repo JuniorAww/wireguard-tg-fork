@@ -3,6 +3,7 @@ import { User, AppConfig, UserConfig } from '../types';
 import * as db from '../db';
 import { logActivity } from '../logger';
 import { devices } from '../bot';
+import { getUsageText } from '../utils'
 
 let botInstance: TelegramBot;
 let appConfigInstance: AppConfig;
@@ -11,8 +12,6 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
     botInstance = bot;
     appConfigInstance = appCfg;
 }
-
-const toMB = (b: number) => ((b || 0) / 1024 / 1024).toFixed(1) + ' МБ';
 
 export async function handleAdminCommand(msg: TelegramBot.Message) {
     const chatId = msg.chat.id;
@@ -197,7 +196,7 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
         const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
         const statusIcon = config.isEnabled ? '✅' : '❌';
 
-        messageText += `\n${statusIcon} <b>"${config.userGivenName}"</b> (от ${ownerIdentifier}, трафик: ${toMB(totalTraffic)})`;
+        messageText += `\n${statusIcon} <b>"${config.userGivenName}"</b> (от ${ownerIdentifier}, трафик: ${getUsageText(totalTraffic)})`;
         inline_keyboard.push([{ text: `"${config.userGivenName}" от ${ownerIdentifier}`, callback_data: `admin_view_cfg_idx_${globalIndex}` }]);
     });
 
@@ -281,7 +280,7 @@ export async function handleAdminViewUser(chatId: number, userIdToView: number) 
             const totalTx = config.totalTx || 0;
             const totalRx = config.totalRx || 0;
             const statusIcon = config.isEnabled ? '✅' : '❌';
-            messageText += `  ${statusIcon} "${config.userGivenName}" (скачано: ${toMB(totalTx)}, отправлено: ${toMB(totalRx)})\n`;
+            messageText += `  ${statusIcon} "${config.userGivenName}" (скачано: ${getUsageText(totalTx)}, отправлено: ${getUsageText(totalRx)})\n`;
         });
     } else {
         messageText += `  У пользователя нет конфигураций.\n`;
@@ -360,7 +359,7 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
 
     const totalTx = config.totalTx || 0;
     const totalRx = config.totalRx || 0;
-    const bandwidth = `${toMB(totalTx)} скачано, ${toMB(totalRx)} отправлено`;
+    const bandwidth = `${getUsageText(totalTx)} скачано, ${getUsageText(totalRx)} отправлено`;
     text += `Трафик: ${bandwidth}\n`;
 
     text += `Клиент ID (wg-easy): ${config.wgEasyClientId}`;
