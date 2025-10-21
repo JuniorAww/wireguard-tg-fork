@@ -1,9 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { AppConfig } from '../types';
-import * as userFlow from './user_flow';
-import * as adminFlow from './admin_flow';
-import { logActivity } from '../logger';
-import * as db from '../db';
+import { AppConfig } from '$/db/types';
+import * as userFlow from '$/handlers/user_flow';
+import * as adminFlow from '$/handlers/admin_flow';
+import { logActivity } from '$/utils/logger';
+import * as db from '$/db';
 
 
 let botInstance: TelegramBot;

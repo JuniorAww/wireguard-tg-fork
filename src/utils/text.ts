@@ -1,6 +1,6 @@
 const KB = 1024;
 const MB = KB * 1024;
-const GB = MB * 1024;
+const GB = MB * 1000;
 const TB = GB * 1000;
 
 export function getUsageText(bytes: number) {
@@ -20,10 +20,10 @@ const latinMap: Record<string, string> = {
     'ф': 'f', 'х': 'h', 'ц': 'c', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
     'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
     ' ': '_',
-};
+}
 
 export function escapeConfigName(input: string): string {
-    if (!input) return "";
+    if (!input?.length) return "_";
     
     let result = "";
     for (let i = 0; i < input.length; i++) {
@@ -38,7 +38,10 @@ export function escapeConfigName(input: string): string {
             }
             else result += mapped[0].toUpperCase() + mapped.slice(1)
         }
+        else result += char; // latin fix
     }
-
-    return result.replace(/[^a-z_]/gi, '');
+    
+    if (/^\d/.test(result[0])) result = '_' + result;
+    
+    return result.replace(/[^a-z0-9_.]/gi, '');
 }

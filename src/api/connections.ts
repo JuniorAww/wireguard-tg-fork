@@ -1,7 +1,7 @@
-import { ConnectionInfo, UserConfig } from './types';
-import { listWgClients } from './wg_easy_api';
-import { logActivity } from './logger';
-import * as db from './db';
+import { ConnectionInfo, UserConfig } from '$/db/types';
+import { listWgClients } from '$/api/wg_easy_api';
+import { logActivity } from '$/utils/logger';
+import * as db from '$/db';
 
 let connectionInfo: Record<string, ConnectionInfo> = {};
 
@@ -47,6 +47,8 @@ const updateConnectionInfos = async () => {
 
             config.lastKnownRx = client.transferRx;
             config.lastKnownTx = client.transferTx;
+            if (client.latestHandshakeAt)
+                config.latestHandshakeAt = client.latestHandshakeAt;
 
             db.updateUser(user.id, { configs: user.configs });
         }

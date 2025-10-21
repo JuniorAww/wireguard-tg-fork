@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { Database, User, AccessRequest, UserConfig } from './types';
-import { logActivity } from './logger';
+import { Database, User, AccessRequest, UserConfig } from '$/db/types';
+import { logActivity } from '$/utils/logger';
 
 const dbFilePath = path.join(process.cwd(), 'data', 'database.json');
 const SAVE_INTERVAL = 15 * 1000; // 15 секунд

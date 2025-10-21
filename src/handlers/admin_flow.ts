@@ -1,9 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { User, AppConfig, UserConfig } from '../types';
-import * as db from '../db';
-import { logActivity } from '../logger';
-import { devices } from '../bot';
-import { getUsageText } from '../utils'
+import { User, AppConfig, UserConfig } from '$/db/types';
+import { logActivity } from '$/utils/logger';
+import { getUsageText } from '$/utils/text';
+import { devices } from '$/bot';
+import * as db from '$/db';
+
+import * as userFlow from '$/handlers/user_flow';
+import * as wgAPI from '$/api/wg_easy_api';
 
 let botInstance: TelegramBot;
 let appConfigInstance: AppConfig;
@@ -16,7 +19,7 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
 export async function handleAdminCommand(msg: TelegramBot.Message) {
     const chatId = msg.chat.id;
     const userId = msg.from!.id;
-
+    
     if (userId !== appConfigInstance.adminTelegramId) {
         await botInstance.sendMessage(chatId, "Эта команда доступна только администратору.");
         return;
@@ -396,9 +399,6 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
 // и будут принимать ownerId.
 // userFlow.handleConfigAction, вызывая соответствующие wgAPI функции
 // и обновляя состояние конфига в db.updateUser(ownerId, ...).
-
-import * as userFlow from './user_flow';
-import * as wgAPI from '../wg_easy_api';
 
 export async function handleAdminConfigAction(adminChatId: number, actionWithPrefix: string, configIdentifier: string) {
     const allConfigs = db.getAllConfigs();
