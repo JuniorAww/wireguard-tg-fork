@@ -8,7 +8,7 @@ export function getUsageText(bytes: number) {
     
     if (usage > TB) return (usage / TB).toFixed(1) + ' ТБ';
     if (usage > GB) return (usage / GB).toFixed(1) + ' ГБ';
-    if (usage > MB) return (usage / MB).toFixed(1) + ' ГБ';
+    if (usage > MB) return (usage / MB).toFixed(1) + ' МБ';
     return                 (usage / KB).toFixed(1) + ' КБ';
     // мяу мяу? МЯУ?
 }

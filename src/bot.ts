@@ -1,15 +1,15 @@
 import TelegramBot from 'node-telegram-bot-api';
 import fs from 'fs';
 import path from 'path';
-import { AppConfig, Device, User } from './db/types';
-import * as userFlow from './handlers/user_flow';
-import * as adminFlow from './handlers/admin_flow';
-import * as db from './db';
-import { initWgEasyApi } from './api/wg_easy_api';
-import { initUserFlow, handleStart, handleConfigNameInput } from './handlers/user_flow';
-import { initAdminFlow, handleAdminCommand } from './handlers/admin_flow';
-import { initCallbackQueryHandler, handleCallbackQuery } from './handlers/callback_query_handler';
-import { logActivity } from './utils/logger';
+import { AppConfig, Device, User } from '$/db/types';
+import * as userFlow from '$/handlers/user_flow';
+import * as adminFlow from '$/handlers/admin_flow';
+import * as db from '$/db';
+import { initWgEasyApi } from '$/api/wg_easy_api';
+import { initUserFlow, handleStart, handleConfigNameInput } from '$/handlers/user_flow';
+import { initAdminFlow, handleAdminCommand } from '$/handlers/admin_flow';
+import { initCallbackQueryHandler, handleCallbackQuery } from '$/handlers/callback_query_handler';
+import { logActivity } from '$/utils/logger';
 
 /* =================================
  Конфигурация устройств - из файла
