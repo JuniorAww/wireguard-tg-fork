@@ -104,7 +104,7 @@ export async function createWgClient(clientNameForWgEasy: string): Promise<WgEas
                             return clientData as WgEasyClient;
                         }
                     }
-                } catch (e) {
+                } catch (e : any) {
                     logActivity(`Client ${clientNameForWgEasy} creation response (status ${createResponse.status}) was not JSON or did not contain client data: ${e.message}`);
                 }
                 logActivity(`Unexpected response status after creating client ${clientNameForWgEasy}: ${createResponse.status}`);
@@ -136,8 +136,9 @@ export async function createWgClient(clientNameForWgEasy: string): Promise<WgEas
         }
     } catch (error) {
         console.error(`Error creating WireGuard client ${clientNameForWgEasy}:`, error);
-        return null;
     }
+    
+    return null;
 }
 
 export async function getClientConfiguration(clientId: string): Promise<string | null> {
@@ -243,7 +244,7 @@ export async function enableWgClient(clientId: string): Promise<boolean> {
             logActivity(`Successfully enabled wg client ID: ${clientId} (JSON success)`);
             return true;
         }
-        llogActivity(`Failed to enable wg client ID: ${clientId}. Unexpected response: ${JSON.stringify(response)}`);
+        logActivity(`Failed to enable wg client ID: ${clientId}. Unexpected response: ${JSON.stringify(response)}`);
         return false;
     } catch (error) {
         console.error(`Error enabling WireGuard client ${clientId}:`, error);

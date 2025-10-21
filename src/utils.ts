@@ -4,7 +4,7 @@ const GB = MB * 1024;
 const TB = GB * 1000;
 
 export function getUsageText(bytes: number) {
-    const usage = b || 0;
+    const usage = bytes || 0;
     
     if (usage > TB) return (usage / TB).toFixed(1) + ' ТБ';
     if (usage > GB) return (usage / GB).toFixed(1) + ' ГБ';

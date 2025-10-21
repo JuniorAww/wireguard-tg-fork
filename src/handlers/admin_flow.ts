@@ -240,7 +240,7 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
 export async function handleAdminViewLogs(chatId: number) {
     try {
         const logContent = await Bun.file('data/activity.log').text();
-        const lines = logContent.split('\n').filter(line => line.trim() !== '');
+        const lines = logContent.split('\n').filter((line: string) => line.trim() !== '');
         const lastNLines = lines.slice(-20).join('\n');
         if (lastNLines) {
             await botInstance.sendMessage(chatId, `Последние логи:\n\`\`\`\n${lastNLines}\n\`\`\``, {
@@ -327,7 +327,7 @@ export async function handleAdminRevokeAccessConfirm(adminChatId: number, userId
     await botInstance.sendMessage(adminChatId, `Доступ для пользователя ${userIdentifier} отозван.`);
     try {
         await botInstance.sendMessage(userIdToRevoke, "Администратор отозвал ваш доступ к боту. Вы больше не можете создавать новые конфигурации или управлять существующими через бота. Для повторного получения доступа обратитесь к администратору или используйте команду /start для запроса.");
-    } catch (e) {
+    } catch (e: any) {
         logActivity(`Failed to notify user ${userIdToRevoke} about access revocation: ${e.message}`);
     }
     await handleAdminListUsers(adminChatId, 0);

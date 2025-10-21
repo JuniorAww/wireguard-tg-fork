@@ -1,10 +1,11 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { User, Device, AppConfig } from '../types';
+import { User, Device, AppConfig, CallbackButton } from '../types';
 import * as db from '../db';
 import * as wgAPI from '../wg_easy_api';
 import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '../connections';
 import { logActivity } from '../logger';
 import { getUsageText, escapeConfigName } from '../utils'
+import { handleAdminViewConfig, handleAdminListAllConfigs } from './admin_flow'
 
 let botInstance: TelegramBot;
 let devices: Device[];
@@ -96,7 +97,7 @@ export async function handleRequestAccess(chatId: number, userId: number, userna
         db.addAccessRequest(userId, username, adminMessage.message_id);
         await botInstance.sendMessage(chatId, "Ваш запрос на доступ отправлен администратору. Ожидайте решения.");
         logActivity(`Access request sent to admin for user ${userId} (${username}). Admin msg ID: ${adminMessage.message_id}`);
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error sending access request to admin:", error);
         logActivity(`Error sending access request to admin for ${userId}: ${error}`);
         await botInstance.sendMessage(chatId, "Не удалось отправить запрос администратору. Пожалуйста, попробуйте позже.");
@@ -224,7 +225,7 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
         }
         await showMainMenu(chatId, userId);
 
-    } catch (error) {
+    } catch (error : any) {
         console.error("Error in config creation flow:", error);
         logActivity(`Error creating config for user ${userId}: ${error}`);
         await botInstance.sendMessage(chatId, "Произошла ошибка при создании конфигурации. Пожалуйста, попробуйте позже.");
@@ -266,13 +267,15 @@ export async function handleListMyConfigs(chatId: number, userId: number, page: 
     
     let itemsInCurrentRow = 0;
     let currentRowSymbolsLength = 0;
-    let currentRow = [];
+    let currentRow: CallbackButton[] = [];
     
     pageConfigs.forEach((config, index) => {
         const globalIndex = startIndex + index;
-        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';        
-        const bytes_sent = (getWgConnectionInfo(config.wgEasyClientId)?.transferTx || 0) > 0 || (config.totalTx || 0) > 0;
-        const symbol = !config.isEnabled ? '❌' : bytes_sent > 0 ? '✅' : '💤';
+        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
+        const connectionInfo = getWgConnectionInfo(config.wgEasyClientId);
+        const transferTx = connectionInfo?.transferTx || 0;
+        const active = transferTx > 0 || (config.totalTx || 0) > 0;
+        const symbol = !config.isEnabled ? '❌' : active ? '✅' : '💤';
         const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
         messageText += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${getUsageText(totalTraffic)})\n`;
         
@@ -405,7 +408,7 @@ export async function handleConfigAction(chatId: number, userId: number, action:
     try {
         const refreshView = async () => {
             if (isAdminAction) {
-                await adminFlow.handleAdminViewConfig(chatId, userId, wgEasyClientId);
+                await handleAdminViewConfig(chatId, userId, wgEasyClientId);
             } else {
                 await handleViewConfig(chatId, userId, wgEasyClientId);
             }
@@ -476,17 +479,14 @@ export async function handleConfigAction(chatId: number, userId: number, action:
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" удалена.` }); // callback_query_handler
                     await botInstance.sendMessage(chatId, `Конфигурация "${config.userGivenName}" удалена.`); // TODO: edit message instead of sending new one
                     logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${userId}`);
-                    if (isAdminAction) {
-                        await adminFlow.handleAdminListAllConfigs(chatId, 0);
-                        return;
-                    }
-                    await handleListMyConfigs(chatId, userId, 0);
+                    if (isAdminAction) await handleAdminListAllConfigs(chatId, 0);
+                    else await handleListMyConfigs(chatId, userId, 0);
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось удалить конфигурацию.");
                 }
                 break;
         }
-    } catch (error) {
+    } catch (error : any) {
         console.error(`Error processing config action ${action} for ${wgEasyClientId}:`, error);
         logActivity(`Error in config action ${action} for ${wgEasyClientId} by user ${userId}: ${error}`);
         await botInstance.sendMessage(chatId, "Произошла ошибка при выполнении действия.");
@@ -551,7 +551,7 @@ export async function handleFeedbackInput(msg: TelegramBot.Message) {
         await botInstance.sendMessage(appConfigInstance.adminTelegramId, messageToAdmin);
         await botInstance.sendMessage(chatId, "Спасибо! Ваше сообщение отправлено администратору.");
         logActivity(`User ${userId} sent feedback: "${feedbackText}"`);
-    } catch (error) {
+    } catch (error : any) {
         logActivity(`Failed to send feedback from ${userId} to admin: ${error}`);
         await botInstance.sendMessage(chatId, "Не удалось отправить сообщение администратору. Пожалуйста, попробуйте позже.");
     } finally {

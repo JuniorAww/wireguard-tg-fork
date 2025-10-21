@@ -18,7 +18,7 @@ export interface UserConfig {
 export interface ConnectionInfo {
     transferTx: number;
     transferRx: number;
-    latestHandshakeAt: string // ISO timestamp
+    latestHandshakeAt: string | null // ISO timestamp
 }
 
 export interface User {
@@ -51,4 +51,9 @@ export interface AppConfig {
     telegramBotToken: string;
     adminTelegramId: number;
     wgEasyApiUrl: string;
+}
+
+export interface CallbackButton {
+    text: string;
+    callback_data: string;
 }

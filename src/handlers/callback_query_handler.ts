@@ -192,7 +192,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             } else { // ownerId_wgClientId
                 await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`);
             }
-            if (!action.endsWith('_ask')) {
+            if (!actionWithPrefix.endsWith('_ask')) {
                 try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
             }
             return;
