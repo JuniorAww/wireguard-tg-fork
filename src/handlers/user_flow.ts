@@ -1,8 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage } from '$/api/connections';
+import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage, hourlyUsageHistory, getMonthlyUsage } from '$/api/connections';
 import { handleAdminViewConfig, handleAdminListAllConfigs } from '$/handlers/admin_flow'
 import { User, Device, AppConfig, CallbackButton } from '$/db/types';
 import { getUsageText, escapeConfigName } from '$/utils/text'
+import { generateUsageChart, generateMonthlyUsageChart } from '$/utils/chart';
 import { logActivity } from '$/utils/logger';
 import * as wgAPI from '$/api/wg_easy_api';
 import * as db from '$/db';
@@ -64,16 +65,53 @@ export async function showMainMenu(chatId: number, userId: number) {
         keyboard.push([{ text: "👑 Админ-панель" }]);
     }
     
-    const hourStats = `\n\n📊<b>За последний час</b> скачано ${getUsageText(lastHourUsage.tx)}, загружено ${getUsageText(lastHourUsage.rx)}`
+    const hourStats = `📊<b>За последний час</b> скачано ${getUsageText(lastHourUsage.tx)}, загружено ${getUsageText(lastHourUsage.rx)}`;
+    const caption = `🌟 <b>Главное меню</b>\n\n${hourStats}`;
 
-    await botInstance.sendMessage(chatId, "🌟 <b>Главное меню</b>" + hourStats, {
+    const placeholderMessage = await botInstance.sendMessage(chatId, "🔄 Загрузка статистики...", {
         reply_markup: {
             keyboard: keyboard,
             resize_keyboard: true,
-            one_time_keyboard: false
+            one_time_keyboard: false,
         },
-        parse_mode: 'HTML'
     });
+    
+    try {
+        const currentHour = new Date().getUTCHours();
+        const hourlyUsageWithHours = hourlyUsageHistory
+            .map((usage, hour) => ({ ...usage, hour }))
+            .slice(0, currentHour + 1);
+        const chartImageBuffer = await generateUsageChart(hourlyUsageWithHours);
+
+        await botInstance.sendPhoto(chatId, chartImageBuffer, {
+            caption: caption,
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: keyboard,
+                resize_keyboard: true,
+                one_time_keyboard: false,
+            },
+        });
+
+        await botInstance.deleteMessage(chatId, placeholderMessage.message_id);
+
+    } catch (error) {
+        console.error("Failed to generate or send usage chart:", error);
+        logActivity(`Failed to generate or send usage chart for user ${userId}: ${error}`);
+        try {
+            await botInstance.editMessageText(`${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
+                chat_id: chatId,
+                message_id: placeholderMessage.message_id,
+                parse_mode: 'HTML',
+            });
+        } catch (editError) {
+            console.error("Failed to edit caption on error, sending new message:", editError);
+            await botInstance.sendMessage(chatId, `${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
+                parse_mode: 'HTML',
+                reply_markup: { keyboard: keyboard, resize_keyboard: true, one_time_keyboard: false },
+            });
+        }
+    }
 }
 
 export async function handleRequestAccess(chatId: number, userId: number, username?: string) {
@@ -358,7 +396,10 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
         return;
     }
 
-    const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
+    const placeholderMessage = await botInstance.sendMessage(chatId, `🔄 Загрузка деталей для "${config.userGivenName}"...`);
+
+    try {
+        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
     const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
     
     const conInfo = getWgConnectionInfo(wgEasyClientId);
@@ -383,25 +424,40 @@ export async function handleViewConfig(chatId: number, userId: number, wgEasyCli
     text += `<b>Трафик:</b> ${bandwidth}\n`
     text += `<b>ID (wg-easy):</b> ${config.wgEasyClientId}`;
 
+        const chartImageBuffer = await generateMonthlyUsageChart(config.dailyUsage);
 
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
-        [
-            { text: "📥 Скачать (.conf)", callback_data: `dl_config_${wgEasyClientId}` },
-            { text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
-        ],
-        [
-            config.isEnabled
-                ? { text: "🚫 Отключить", callback_data: `disable_config_${wgEasyClientId}` }
-                : { text: "▶️ Включить", callback_data: `enable_config_${wgEasyClientId}` }
-        ],
-        [
-            { text: "🗑 Удалить", callback_data: `delete_config_ask_${wgEasyClientId}` }
-        ],
-        [{ text: "⬅️ К списку конфигов", callback_data: `list_my_configs_page_0` }],
-        [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]
-    ];
+        const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+            [
+                { text: "📥 Скачать (.conf)", callback_data: `dl_config_${wgEasyClientId}` },
+                { text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
+            ],
+            [
+                config.isEnabled
+                    ? { text: "🚫 Отключить", callback_data: `disable_config_${wgEasyClientId}` }
+                    : { text: "▶️ Включить", callback_data: `enable_config_${wgEasyClientId}` }
+            ],
+            [
+                { text: "🗑 Удалить", callback_data: `delete_config_ask_${wgEasyClientId}` }
+            ],
+            [{ text: "⬅️ К списку конфигов", callback_data: `list_my_configs_page_0` }],
+            [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]
+        ];
 
-    await botInstance.sendMessage(chatId, text, { parse_mode: 'HTML', reply_markup: { inline_keyboard } });
+        await botInstance.sendPhoto(chatId, chartImageBuffer, {
+            caption: text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard }
+        });
+
+        await botInstance.deleteMessage(chatId, placeholderMessage.message_id);
+    } catch (error) {
+        console.error(`Failed to show config details with chart for ${wgEasyClientId}:`, error);
+        logActivity(`Failed to show config details with chart for ${wgEasyClientId}: ${error}`);
+        await botInstance.editMessageText(`⚠️ Не удалось загрузить детали конфигурации с графиком.`, {
+            chat_id: chatId,
+            message_id: placeholderMessage.message_id,
+        });
+    }
 }
 
 export async function handleConfigAction(chatId: number, userId: number, action: string, wgEasyClientId: string, isAdminAction: boolean = false) {

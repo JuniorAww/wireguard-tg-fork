@@ -128,6 +128,13 @@ bot.onText(/⚙️ Все конфиги/, async (msg) => {
     }
 });
 
+bot.onText(/📊 Статистика/, async (msg) => {
+    if (msg.from?.id === appConfig.adminTelegramId) {
+        logActivity(`Admin ${msg.from!.id} selected '📊 Статистика'`);
+        await adminFlow.handleAdminShowUsageStats(msg.chat.id);
+    }
+});
+
 bot.onText(/📝 Просмотр логов/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '📝 Просмотр логов'`);
@@ -174,7 +181,7 @@ bot.on('message', async (msg) => {
 
     const knownTextCommands = [
         "🛡 Wireguard", "📄 Мои конфиги", "👑 Админ-панель",
-        "❓ Плохо работает VPN", "👥 Пользователи", "⚙️ Все конфиги", "📝 Просмотр логов",
+        "❓ Плохо работает VPN", "👥 Пользователи", "⚙️ Все конфиги", "📝 Просмотр логов", "📊 Статистика",
         "⬅️ Главное меню"
     ];
 
