@@ -3,6 +3,12 @@ export interface Device {
     name: string;
 }
 
+export interface DailyUsage {
+    date: string;
+    rx: number;
+    tx: number;
+}
+
 export interface UserConfig {
     userGivenName: string;
     wgEasyClientId: string; // ID клиента из wg-easy
@@ -14,6 +20,7 @@ export interface UserConfig {
     lastKnownRx?: number;
     lastKnownTx?: number;
     latestHandshakeAt?: string | null;
+    dailyUsage?: DailyUsage[];
 }
 
 export interface ConnectionInfo {

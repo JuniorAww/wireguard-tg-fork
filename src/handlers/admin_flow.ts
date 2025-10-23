@@ -1,6 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { User, AppConfig, UserConfig } from '$/db/types';
 import { logActivity } from '$/utils/logger';
+import { generateMonthlyUsageChart, generateTopUsersChart } from '$/utils/chart';
 import { getUsageText } from '$/utils/text';
 import { devices } from '$/bot';
 import * as db from '$/db';
@@ -19,7 +20,7 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
 export async function handleAdminCommand(msg: TelegramBot.Message) {
     const chatId = msg.chat.id;
     const userId = msg.from!.id;
-    
+
     if (userId !== appConfigInstance.adminTelegramId) {
         await botInstance.sendMessage(chatId, "Эта команда доступна только администратору.");
         return;
@@ -30,7 +31,7 @@ export async function handleAdminCommand(msg: TelegramBot.Message) {
 export async function showAdminMainMenu(chatId: number) {
     const keyboard: TelegramBot.KeyboardButton[][] = [
         [{ text: "👥 Пользователи" }, { text: "⚙️ Все конфиги" }],
-        [{ text: "📝 Просмотр логов" }],
+        [{ text: "📝 Просмотр логов" }, { text: "📊 Статистика"}],
         [{ text: "⬅️ Главное меню" }]
     ];
     await botInstance.sendMessage(chatId, "👑 Меню Администратора:", {
@@ -262,6 +263,51 @@ export async function handleAdminViewLogs(chatId: number) {
     logActivity(`Admin ${chatId} requested logs view - WIP`);
 }
 
+export async function handleAdminShowUsageStats(chatId: number) {
+    const placeholder = await botInstance.sendMessage(chatId, "📊 Собираю статистику по конфигурациям...");
+
+    try {
+        const allConfigs = db.getAllConfigs();
+
+        if (allConfigs.length === 0) {
+            await botInstance.editMessageText("Нет созданных конфигураций для отображения статистики.", {
+                chat_id: chatId,
+                message_id: placeholder.message_id,
+                reply_markup: { inline_keyboard: [[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]] }
+            });
+            return;
+        }
+
+        const configUsage = allConfigs.map(config => {
+            const totalUsage = (config.totalRx || 0) + (config.totalTx || 0);
+            const ownerIdentifier = config.ownerUsername ? `@${config.ownerUsername}` : `ID ${config.ownerId}`;
+            return {
+                name: `"${config.userGivenName}" от ${ownerIdentifier}`,
+                usage: totalUsage,
+            };
+        }).sort((a, b) => b.usage - a.usage);
+
+        const chartImageBuffer = await generateTopUsersChart(configUsage);
+
+        await botInstance.sendPhoto(chatId, chartImageBuffer, {
+            caption: '📊 <b>Топ конфигураций по общему потреблению трафика</b>',
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "🔄 Обновить", callback_data: "admin_show_usage_stats" }],
+                    [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
+                ]
+            }
+        });
+        await botInstance.deleteMessage(chatId, placeholder.message_id);
+        logActivity(`Admin ${chatId} viewed config usage stats chart.`);
+    } catch (error) {
+        console.error("Failed to generate or send config usage chart:", error);
+        logActivity(`Failed to generate or send config usage chart for admin ${chatId}: ${error}`);
+        await botInstance.editMessageText("⚠️ Не удалось создать график статистики.", { chat_id: chatId, message_id: placeholder.message_id });
+    }
+}
+
 export async function handleAdminViewUser(chatId: number, userIdToView: number) {
     const user = db.getUser(userIdToView);
 
@@ -338,60 +384,79 @@ export async function handleAdminRevokeAccessConfirm(adminChatId: number, userId
 
 
 export async function handleAdminViewConfig(adminChatId: number, ownerId: number, wgEasyClientId: string) {
-    const owner = db.getUser(ownerId);
-    if (!owner) {
-        await botInstance.sendMessage(adminChatId, "Владелец конфигурации не найден.");
-        return;
+    const placeholderMessage = await botInstance.sendMessage(adminChatId, `👑 Админ: Загрузка деталей конфига...`);
+
+    try {
+        const owner = db.getUser(ownerId);
+        if (!owner) {
+            await botInstance.editMessageText("Владелец конфигурации не найден.", { chat_id: adminChatId, message_id: placeholderMessage.message_id });
+            return;
+        }
+        const config = owner.configs.find(c => c.wgEasyClientId === wgEasyClientId);
+        if (!config) {
+            await botInstance.editMessageText("Конфигурация не найдена у указанного владельца.", { chat_id: adminChatId, message_id: placeholderMessage.message_id });
+            return;
+        }
+
+        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
+        const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
+        const ownerIdentifier = owner.username ? `@${owner.username}` : `ID ${owner.id}`;
+
+        let text = `👑 <b>Админ: Детали конфигурации</b>\n\n`;
+        text += `<b>Имя:</b> "${config.userGivenName}"\n`;
+        text += `<b>Владелец:</b> ${ownerIdentifier} (ID: ${ownerId})\n`;
+        text += `<b>Устройство:</b> ${deviceName} (ID: ${config.deviceId})\n`;
+        text += `<b>Создан:</b> ${creationDate}\n`;
+        text += `<b>Статус:</b> ${config.isEnabled ? "✅ Активен" : "❌ Отключен"}\n`;
+
+        const totalTx = config.totalTx || 0;
+        const totalRx = config.totalRx || 0;
+        const bandwidth = `${getUsageText(totalTx)} скачано, ${getUsageText(totalRx)} отправлено`;
+        text += `<b>Трафик:</b> ${bandwidth}\n\n`;
+
+        text += `<b>Клиент ID (wg-easy):</b> ${config.wgEasyClientId}`;
+
+        const chartImageBuffer = await generateMonthlyUsageChart(config.dailyUsage);
+
+        const allConfigs = db.getAllConfigs();
+        const globalConfigIndex = allConfigs.findIndex(c => c.ownerId === ownerId && c.wgEasyClientId === wgEasyClientId);
+        if (globalConfigIndex === -1) {
+            await botInstance.sendMessage(adminChatId, "Ошибка: не удалось найти глобальный индекс конфигурации.");
+            return;
+        }
+
+        const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+            [
+                { text: "📥 Скачать (.conf)", callback_data: `admin_dl_config_${ownerId}_${wgEasyClientId}` },
+                { text: "📱 QR-код", callback_data: `admin_qr_config_${ownerId}_${wgEasyClientId}` }
+            ],
+            [
+                config.isEnabled
+                    ? { text: "🚫 Отключить", callback_data: `admin_disable_cfg_idx_${globalConfigIndex}` }
+                    : { text: "▶️ Включить", callback_data: `admin_enable_cfg_idx_${globalConfigIndex}` }
+            ],
+            [
+                { text: "🗑 Удалить (Админ)", callback_data: `admin_delete_cfg_ask_idx_${globalConfigIndex}` }
+            ],
+            [
+                { text: "⬅️ К списку всех конфигов", callback_data: `admin_list_all_configs_page_0` }
+            ]
+        ];
+
+        await botInstance.sendPhoto(adminChatId, chartImageBuffer, {
+            caption: text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard }
+        });
+        await botInstance.deleteMessage(adminChatId, placeholderMessage.message_id);
+    } catch (error) {
+        console.error(`Admin failed to show config details with chart for ${wgEasyClientId}:`, error);
+        logActivity(`Admin failed to show config details with chart for ${wgEasyClientId}: ${error}`);
+        await botInstance.editMessageText(`⚠️ Не удалось загрузить детали конфигурации с графиком.`, {
+            chat_id: adminChatId,
+            message_id: placeholderMessage.message_id,
+        });
     }
-    const config = owner.configs.find(c => c.wgEasyClientId === wgEasyClientId);
-    if (!config) {
-        await botInstance.sendMessage(adminChatId, "Конфигурация не найдена у указанного владельца.");
-        return;
-    }
-
-    const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
-    const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
-    const ownerIdentifier = owner.username ? `@${owner.username}` : `ID ${owner.id}`;
-
-    let text = `👑 Админ: Детали конфигурации\n\n`;
-    text += `Имя: "${config.userGivenName}"\n`;
-    text += `Владелец: ${ownerIdentifier} (ID: ${ownerId})\n`;
-    text += `Устройство: ${deviceName} (ID: ${config.deviceId})\n`;
-    text += `Создан: ${creationDate}\n`;
-    text += `Статус: ${config.isEnabled ? "✅ Активен" : "❌ Отключен"}\n`;
-
-    const totalTx = config.totalTx || 0;
-    const totalRx = config.totalRx || 0;
-    const bandwidth = `${getUsageText(totalTx)} скачано, ${getUsageText(totalRx)} отправлено`;
-    text += `Трафик: ${bandwidth}\n`;
-
-    text += `Клиент ID (wg-easy): ${config.wgEasyClientId}`;
-
-    const allConfigs = db.getAllConfigs();
-    const globalConfigIndex = allConfigs.findIndex(c => c.ownerId === ownerId && c.wgEasyClientId === wgEasyClientId);
-    if (globalConfigIndex === -1) {
-        await botInstance.sendMessage(adminChatId, "Ошибка: не удалось найти глобальный индекс конфигурации.");
-        return;
-    }
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
-        [
-            { text: "📥 Скачать (.conf)", callback_data: `admin_dl_config_${ownerId}_${wgEasyClientId}` },
-            { text: "📱 QR-код", callback_data: `admin_qr_config_${ownerId}_${wgEasyClientId}` }
-        ],
-        [
-            config.isEnabled
-                ? { text: "🚫 Отключить", callback_data: `admin_disable_cfg_idx_${globalConfigIndex}` }
-                : { text: "▶️ Включить", callback_data: `admin_enable_cfg_idx_${globalConfigIndex}` }
-        ],
-        [
-            { text: "🗑 Удалить (Админ)", callback_data: `admin_delete_cfg_ask_idx_${globalConfigIndex}` }
-        ],
-        [
-            { text: "⬅️ К списку всех конфигов", callback_data: `admin_list_all_configs_page_0` }
-        ]
-    ];
-
-    await botInstance.sendMessage(adminChatId, text, { parse_mode: 'HTML', reply_markup: { inline_keyboard } });
 }
 
 // Действия с конфигурациями от имени администратора (скачивание, QR, вкл/выкл, удаление)
