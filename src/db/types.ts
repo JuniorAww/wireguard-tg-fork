@@ -37,6 +37,7 @@ export interface User {
     accessRequestedAt?: string;
     accessGrantedAt?: string;
     configs: UserConfig[];
+    subnets: Record<number, boolean>;
     // Для отслеживания состояния в многошаговых операциях
     state?: {
         action: string; // e.g., 'awaiting_config_name'
@@ -54,6 +55,15 @@ export interface AccessRequest {
 export interface Database {
     users: Record<number, User>;
     accessRequests: Record<number, AccessRequest>; // Ключ - userId
+    subnets: Record<number, Subnet>;
+}
+
+export interface Subnet {
+	name: string;
+	creator: number; // Telegram ID
+	createdAt: number;
+	ips?: string[];
+	source?: string; // На будущее (источник, то есть URL или функция парсера)
 }
 
 export interface AppConfig {

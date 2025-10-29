@@ -53,7 +53,13 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}
-			const configActionMatch = data.match(/^(dl_config|qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm)_(.+)$/);
+			if (data.startsWith('config_file_')) {
+				const [ wgEasyClientId, action ] = data.substring('config_file_'.length).split(' ');
+				await userFlow.handleConfigFile(chatId, userId, messageId, wgEasyClientId, action);
+				await botInstance.answerCallbackQuery(query.id);
+				return;
+			}
+			const configActionMatch = data.match(/^(qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm)_(.+)$/);
 			if (configActionMatch) {
 				const action = configActionMatch[1];
 				const wgEasyClientId = configActionMatch[2];
@@ -204,6 +210,28 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 			}
 			if (data === 'admin_view_logs') {
 				await adminFlow.handleAdminViewLogs(chatId);
+				await botInstance.answerCallbackQuery(query.id);
+				return;
+			}
+			if (data.startsWith('admin_subnets_')) {
+				const page = parseInt(data.substring('admin_subnets_'.length), 10) || 0;
+				await adminFlow.handleSubnetList(chatId, messageId, page);
+				await botInstance.answerCallbackQuery(query.id);
+				return;
+			}
+			if (data.startsWith('admin_subnet_')) {
+				const id = parseInt(data.substring('admin_subnet_'.length), 10) || 0;
+				await adminFlow.handleSubnetInfo(chatId, id);
+				await botInstance.answerCallbackQuery(query.id);
+				return;
+			}
+			if (data === 'admin_create_subnet') {
+				await adminFlow.handleSubnetCreation(chatId, userId, messageId);
+				await botInstance.answerCallbackQuery(query.id);
+				return;
+			}
+			if (data === 'admin_delete_subnet') {
+				await adminFlow.handleSubnetDeletion(chatId, userId, messageId);
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}

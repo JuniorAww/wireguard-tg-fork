@@ -22,6 +22,7 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 	const messageParams = !messageId ? undefined : {
 		chat_id: chatId,
 		message_id: messageId,
+		contentType: 'image/png',
 		reply_markup: { inline_keyboard },
 	};
 	
@@ -78,7 +79,7 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 				media: image,
 			}, messageParams);
 			
-			photoId = largest(response.photo).file_id;
+			photoId = response.photo[0].file_id;
 		}
 		else {
 			const response = await this.sendPhoto(chatId, image, {
@@ -87,7 +88,7 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 				reply_markup: { inline_keyboard },
 			});
 			
-			photoId = largest(response.photo).file_id;
+			photoId = response.photo[0].file_id;
 			nextMessageId = response.message_id;
 		}
 		
@@ -104,5 +105,3 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 	
 	return nextMessageId;
 }
-
-const largest = array => array.sort((a,b) => b.width - a.width)[0]

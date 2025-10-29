@@ -12,6 +12,8 @@ import { initCallbackQueryHandler, handleCallbackQuery } from '$/handlers/callba
 import { logActivity } from '$/utils/logger';
 import { sendCachedMedia } from '$/utils/images';
 
+process.env.NTBA_FIX_350 = true; // deprecation log fix
+
 /* =================================
  Конфигурация устройств - из файла
 ================================= */
@@ -24,14 +26,6 @@ if (!fs.existsSync(devicesPath)) {
 }
 export const devices: Device[] = JSON.parse(fs.readFileSync(devicesPath, 'utf-8'));
 logActivity("Device configuration loaded from config/devices.json.");
-
-const paramsPath = path.join(process.cwd(), 'config', 'params.json');
-if (!fs.existsSync(paramsPath)) {
-  console.error(`FATAL: Params file not found at ${paramsPath}`);
-  logActivity(`FATAL: Params file not found at ${paramsPath}`);
-  process.exit(1);
-}
-export const params: any = JSON.parse(fs.readFileSync(paramsPath, 'utf-8'));
 
 /* =============================================
  Загрузка конфигурации из переменных окружения
@@ -70,7 +64,7 @@ initWgEasyApi(appConfig);
 const bot = new TelegramBot(appConfig.telegramBotToken, { polling: true });
 bot.sendCachedMedia = sendCachedMedia;
 
-initUserFlow(bot, devices, params, appConfig);
+initUserFlow(bot, devices, appConfig);
 initAdminFlow(bot, appConfig);
 initCallbackQueryHandler(bot, appConfig);
 
@@ -213,7 +207,7 @@ bot.on('message', async (msg) => {
     }
 
     const user = db.getUser(userId);
-console.log(user,user.state)
+    
     if (user && user.state && user.state.action === 'awaiting_config_name') {
         logActivity(`Received text message from ${userId} potentially for config name: "${msg.text}"`);
         await userFlow.handleConfigNameInput(msg);
@@ -225,6 +219,14 @@ console.log(user,user.state)
     else if (user && user.state && user.state.action === 'awaiting_feedback') {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
+    } 
+    else if (user && user.state && user.state.action === 'admin_subnet_creation') {
+        logActivity(`Received text message from ${userId} for subnet creation: "${msg.text}"`);
+        await adminFlow.handleSubnetCreationText(userId, msg.text);
+    } 
+    else if (user && user.state && user.state.action === 'admin_subnet_deletion') {
+        logActivity(`Received text message from ${userId} for subnet deletion: "${msg.text}"`);
+        await adminFlow.handleSubnetDeletionText(userId, msg.text);
     } 
     else if (msg.text) {
         logActivity(`Received unhandled text message from ${userId}: "${msg.text}"`);

@@ -7,6 +7,7 @@ import { generateUsageChart, generateMonthlyUsageChart } from '$/utils/chart';
 import { logActivity } from '$/utils/logger';
 import * as wgAPI from '$/api/wg_easy_api';
 import { isMediaCached } from '$/utils/images';
+import { getAllowedIPs, sourceEval } from '$/utils/ips';
 import * as db from '$/db';
 import path from 'path';
 import fs from 'node:fs';
@@ -14,13 +15,11 @@ import fs from 'node:fs';
 
 let botInstance: TelegramBot;
 let devices: Device[];
-let params: any;
 let appConfigInstance: AppConfig;
 
-export function initUserFlow(bot: TelegramBot, loadedDevices: Device[], _params: any, appCfg: AppConfig) {
+export function initUserFlow(bot: TelegramBot, loadedDevices: Device[], appCfg: AppConfig) {
     botInstance = bot;
     devices = loadedDevices;
-    params = _params;
     appConfigInstance = appCfg;
 }
 
@@ -59,16 +58,11 @@ export async function handleStart(msg: TelegramBot.Message) {
     }
 }
 
-const cachedMainMenuPhoto = {
-	photoId: 0,
-	expiresAt: 0,
-}
-
 export async function showMainMenu(chatId: number, userId: number, messageId: number) {
 	const user = db.getUser(userId);
 	
     db.updateUser(userId, { state: undefined });
-    const isAdmin = appConfigInstance.adminTelegramIds.includes(userId) && user.role === 2;
+    const isAdmin = appConfigInstance.adminTelegramIds.includes(userId);
 
     const bottomKeyboard: TelegramBot.KeyboardButton[][] = [
         [{ text: "⚡ Открыть главное меню" }],
@@ -482,10 +476,6 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
 	
 	let sentMessage;
 	
-	let { configListPhotoId } = params;
-	
-	console.log(messageId);
-	
 	try {
 		await botInstance.sendCachedMedia(chatId, messageId, {
 			media: "config_list.png",
@@ -502,24 +492,6 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
 		const sentMessage = await botInstance.sendMessage(chatId, caption, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
 		db.updateUser(userId, { state: { action: 'viewing_config_list', data: { messageId: sentMessage.message_id } } });
 	}
-	
-    /*const userState = user.state;
-    if (userState && userState.action === 'viewing_config_list' && userState.data?.messageId) {
-        try {
-            await botInstance.editMessageText(messageText, {
-                chat_id: chatId,
-                message_id: userState.data.messageId,
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard }
-            });
-        } catch (e) {
-            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
-            db.updateUser(userId, { state: { action: 'viewing_config_list', data: { messageId: sentMessage.message_id } } });
-        }
-    } else {
-        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
-        db.updateUser(userId, { state: { action: 'viewing_config_list', data: { messageId: sentMessage.message_id } } });
-    }*/
 }
 
 export async function handleViewConfig(chatId: number, userId: number, messageId: number, wgEasyClientId: string) {
@@ -565,9 +537,12 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
 
 		const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
 			[
-				{ text: "📥 Скачать (.conf)", callback_data: `dl_config_${wgEasyClientId}` },
+				{ text: "📥 Скачать (.conf)", callback_data: `config_file_${wgEasyClientId}` },
 				{ text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
 			],
+			/*[
+				{ text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
+			],*/
 			[
 				config.isEnabled
 					? { text: "🚫 Отключить", callback_data: `disable_config_${wgEasyClientId}` }
@@ -604,12 +579,162 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
     }
 }
 
+export async function handleConfigFile(chatId: number, userId: number, messageId: number, wgEasyClientId: string, action: string) {
+	const user = db.getUser(userId);
+    if (!user) return;
+    
+    console.log(wgEasyClientId)
+
+    const configIndex = user.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
+    console.log('wg easy id ',wgEasyClientId)
+    if (configIndex === -1) {
+        await botInstance.sendMessage(chatId, "❓ Конфигурация не найдена.");
+        return;
+    }
+	
+    const config = user.configs[configIndex];
+    
+    if (!user.subnets) {
+		user.subnets = {};
+		db.updateUser(userId, { subnets: {} });
+	}
+    
+    console.log(action, user.subnets)
+    
+    const allSubnets = db.getSubnets();
+    const allExistingKeys = Object.keys(allSubnets);
+    Object.keys(user.subnets).forEach(subnetId => {
+		if (!allExistingKeys.includes(subnetId)) delete user.subnets[subnetId];
+	})
+    // TODO do updateUser
+    
+    async function show() {
+		let caption = `📥 <b>Настройка .conf</b>`
+			       + `\nВы можете настроить разрешения (AllowedIPs), чтобы конфиг работал только на определенных сервисах`
+			       + `\n<b>Внимание:</b> разрешения плохо работают на Linux!`;
+		
+		const buttons = [];
+		
+		const subButtons = [];
+		console.log(allSubnets);
+		Object.entries(allSubnets).filter(([ subnetId ]) => user.subnets[subnetId] === undefined).map(([ subnetId, subnet ]) => {
+			subButtons.unshift({ text: `✖ ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` })
+		});
+		
+		/*let allowedAmount = 0;
+		let blockedAmount = 0;*/
+		
+		Object.entries(user.subnets).forEach(([ subnetId, enabled ]) => {
+			const emoji = enabled ? '➕' : '➖';
+			/*if (enabled) allowedAmount += allSubnets[subnetId].ips?.length;
+			else         blockedAmount += allSubnets[subnetId].ips?.length;*/
+			subButtons.unshift({ text: `${emoji} ${allSubnets[subnetId]?.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` })
+		});
+		
+		/*caption += `\n<b>Разрешенных IP:</b> ${allowedAmount === 0 ? 'все' : allowedAmount}`
+		caption += `\n<b>Исключенных IP:</b> ${(allowedAmount > 0 && blockedAmount === 0) ? 'все' : blockedAmount}`*/
+		
+		for (let i = 0; i < subButtons.length; i += 2) {
+			buttons.push([ subButtons[i] ])
+			if (subButtons[i + 1]) {
+				buttons[Math.floor(i / 2)].push(subButtons[i + 1])
+			}
+		}
+		
+		buttons.push([{ text: "✅ Получить конфиг", callback_data: `config_file_${wgEasyClientId} get` }]);
+		
+		const reply_markup = {
+			inline_keyboard: buttons
+		}
+		
+		await botInstance.editMessageCaption(caption, {
+			parse_mode: 'HTML',
+			chat_id: chatId,
+			message_id: messageId,
+			reply_markup,
+		});
+	}
+	
+	try {
+		if (action === 'get') {
+			let fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
+			if (typeof fileContent === 'string' && fileContent.length > 0) {
+				const subnetKeys = Object.keys(user.subnets);
+				
+				if (subnetKeys.length !== 0) {
+					const subnets = Object.entries(user.subnets);
+					
+					let allowed = [];
+					let blocked = [];
+					
+					// TODO if source, then do caching (each X minutes)
+					
+					for (const [ id ] of subnets.filter(e => e[1] === true)) {
+						const subnet = allSubnets[id];
+						if (subnet.ips?.length) allowed = [ ...allowed, ...subnet.ips ];
+						if (subnet.source) allowed = [ ...allowed, ...await sourceEval(subnet.source) ];
+					}
+					
+					for (const [ id ] of subnets.filter(e => e[1] === false)) {
+						const subnet = allSubnets[id];
+						if (subnet.ips?.length) blocked = [ ...blocked, ...subnet.ips ];
+						if (subnet.source) blocked = [ ...blocked, ...await sourceEval(subnet.source) ];
+					}
+					
+					if (!allowed.length) allowed = [ "0.0.0.0/0" ];
+					
+					console.log('allowed/blocked size', allowed.length, blocked.length);
+					const sum = getAllowedIPs(allowed, blocked);
+					console.log('sum size', sum.length);
+					
+					const lines = fileContent.split('\n');
+					console.log(lines);
+					const aiLine = lines.findIndex(l => l.startsWith('AllowedIPs'));
+					if (aiLine === -1) throw new Error("No AllowedIPs line found");
+					
+					lines[aiLine] = 'AllowedIPs = ' + sum.join(',');
+					fileContent = lines.join('\n');
+				}
+				
+				await handleViewConfig(chatId, userId, messageId, wgEasyClientId);
+				await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
+					filename: `${escapeConfigName(config.userGivenName)}.conf`,
+					contentType: 'text/plain'
+				});
+				logActivity(`User ${userId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);
+			} else {
+				logActivity(`Failed to get config file content for ${wgEasyClientId} in handleConfigAction (dl_config). Content: ${fileContent}`);
+				await botInstance.sendMessage(chatId, "Не удалось получить файл конфигурации.");
+			}
+		}
+		else if (action?.startsWith('swap')) {
+			const subnet = action.split('-')[1];
+			
+			const entry = user.subnets[subnet];
+			
+			if (entry === undefined) user.subnets[subnet] = true;
+			else if (entry === true) user.subnets[subnet] = false;
+			else delete user.subnets[subnet];
+			
+			db.updateUser(userId, { subnets: user.subnets });
+			
+			await show();
+		}
+		else {
+			await show();
+		}
+	} catch (e) {
+		console.log('Ошибка', e);
+		await botInstance.sendMessage(chatId, "Произошла неизвестная ошибка.");
+	}
+}
+
 export async function handleConfigAction(chatId: number, userId: number, messageId: number, action: string, wgEasyClientId: string, isAdminAction: boolean = false) {
     const user = db.getUser(userId);
     if (!user) return;
 
     const configIndex = user.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-    console.log('wg easy id ',wgEasyClientId)
+    
     if (configIndex === -1) {
         await botInstance.sendMessage(chatId, "❓ Конфигурация не найдена.");
         return;
@@ -625,19 +750,6 @@ export async function handleConfigAction(chatId: number, userId: number, message
             }
         };
         switch (action) {
-            case 'dl_config':
-                const fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
-                if (typeof fileContent === 'string' && fileContent.length > 0) {
-                    await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
-                        filename: `${escapeConfigName(config.userGivenName)}.conf`,
-                        contentType: 'text/plain'
-                    });
-                    logActivity(`User ${userId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);
-                } else {
-                    logActivity(`Failed to get config file content for ${wgEasyClientId} in handleConfigAction (dl_config). Content: ${fileContent}`);
-                    await botInstance.sendMessage(chatId, "Не удалось получить файл конфигурации.");
-                }
-                break;
             case 'qr_config':
                 const qrBuffer = await wgAPI.getClientQrCodeSvg(wgEasyClientId);
                 if (qrBuffer instanceof Buffer && qrBuffer.length > 0) {

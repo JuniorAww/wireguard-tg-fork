@@ -1,8 +1,13 @@
 const INT_MAX = 2 ** 32;
 
-export async function getAllowedIPs(allow, block) {
-	let allowedIPs = [ ...allow.split(',') ].map(c => cidrToRange(c))
-	let blockedIPs = [ ...block.split(',') ].map(c => cidrToRange(c))
+export async function sourceEval(source) {
+	const asyncEval = new Function(`return (async () => { return ${source} })();`);
+	return await asyncEval();
+}
+
+export function getAllowedIPs(allow, block) {
+	let allowedIPs = allow.map(c => cidrToRange(c))
+	let blockedIPs = block.map(c => cidrToRange(c))
 	
 	const allowedRanges = getRanges(allowedIPs)
 	const blockedRanges = getRanges(blockedIPs)
@@ -156,5 +161,3 @@ const int2Ip = num => {
 				   num % 256,
     ].join('.');
 }
-
-console.log(await getAllowedIPs("0.0.0.0/0", "1.0.0.0/32"))

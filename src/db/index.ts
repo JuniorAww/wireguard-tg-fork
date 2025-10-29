@@ -9,6 +9,7 @@ const SAVE_INTERVAL = 15 * 1000; // 15 секунд
 let database: Database = {
     users: {},
     accessRequests: {},
+    subnets: {},
 };
 
 const dataDir = path.dirname(dbFilePath);
@@ -35,20 +36,47 @@ export function loadDb(): void {
 
 function updateTables(database: Database) {
 	const sampleUserId = Object.keys(database.users)[0];
+	console.log('Sample user ID', sampleUserId);
 	if (!sampleUserId) return;
 	
 	const sampleUser = database.users[sampleUserId];
+	console.log('Sample user', sampleUser);
 	
-	if (!sampleUser.role) {
-        logActivity(`Config migration`);
+	if (!sampleUser.subnets) {
+        logActivity(`Config migration (subnets №1)`);
 		
 		for (const userId in database.users) {
 			const user = database.users[userId]
 			//user.role = 2;
+			user.subnets = {};
 			for (const c of user.configs) {
 				c.creator = user.id;
 			}
 		}
+	}
+	
+	if (!database.subnets) {
+		console.log("Config migration (subnets №2)")
+		database.subnets = {
+			1: {
+				name: "Google",
+				creator: 0,
+				createdAt: Date.now(),
+				source: "(await (await fetch('https://www.gstatic.com/ipranges/goog.json')).json()).prefixes.filter(x=>x.ipv4Prefix).map(x=>x.ipv4Prefix)"
+			},
+			2: {
+				name: "Госуслуги",
+				creator: 0,
+				createdAt: Date.now(),
+				source: "await (await import('node:dns/promises')).resolve4('gosuslugi.ru')"
+			},
+			3: {
+				name: "Локальная сеть",
+				creator: 0,
+				createdAt: Date.now(),
+				ips: [ '192.168.0.0/16' ],
+			}
+		};
 	}
 }
 
@@ -78,6 +106,7 @@ export function ensureUser(userId: number, username?: string): User {
             username: username,
             hasAccess: false,
             configs: [],
+            subnets: {}
         };
         logActivity(`New user created: ${userId} (${username || 'N/A'})`);
     } else if (username && database.users[userId].username !== username) {
@@ -128,4 +157,8 @@ export function getAllConfigs(): Array<UserConfig & { ownerId: number, ownerUser
         });
     }
     return allConfigs;
+}
+
+export function getSubnets(): Record<number, Subnet> {
+	return database.subnets;
 }

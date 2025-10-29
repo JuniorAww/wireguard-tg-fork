@@ -3,6 +3,7 @@ import { User, AppConfig, UserConfig } from '$/db/types';
 import { logActivity } from '$/utils/logger';
 import { generateMonthlyUsageChart, generateTopUsersChart } from '$/utils/chart';
 import { getUsageText } from '$/utils/text';
+import { sourceEval } from '$/utils/ips';
 import { devices } from '$/bot';
 import * as db from '$/db';
 
@@ -23,6 +24,7 @@ export async function showAdminMainMenu(chatId: number, messageId: number) {
         { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
         [{ text: "📝 Просмотр логов", callback_data: "admin_view_logs" },
         { text: "📊 Статистика", callback_data: "admin_show_stats" }],
+        [{ text: "📌 Списки IP", callback_data: "admin_subnets_0" }],
         [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }],
     ];
     try {
@@ -172,6 +174,179 @@ export async function handleAdminListUsers(chatId: number, page: number) {
         db.updateUser(chatId, { state: { action: 'admin_viewing_users', data: { messageId: sentMessage.message_id } } });
     }
     logActivity(`Admin ${chatId} requested user list (page ${page}) - WIP`);
+}
+
+export async function handleSubnetList(chatId: number, messageId: number, page: number) {
+    const subnets = db.getSubnets();
+    const ITEMS_PER_PAGE = 10;
+
+    const totalPages = Math.ceil(Object.keys(subnets).length / ITEMS_PER_PAGE);
+    const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+    
+    console.log(subnets, subnets.length, currentPage)
+	
+    const startIndex = currentPage * ITEMS_PER_PAGE;
+    const pageIps = Object.entries(subnets).slice(startIndex, startIndex + ITEMS_PER_PAGE);
+	
+    let messageText = `📌 Списки IP (Страница ${currentPage + 1}/${totalPages}):\n`;
+    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+
+    if (pageIps.length === 0 && currentPage > 0) {
+        messageText = "На этой странице нет данных. Похоже, список изменился.";
+    } else {
+        pageIps.forEach(([ subnetId, subnet ]) => {
+            const text = `${subnetId}. ${subnet.name} (${subnet.ips ? (subnet.ips.length + " IP") : "источник"})`
+            inline_keyboard.push([{ text, callback_data: `admin_subnet_${subnetId}` }]);
+        });
+    }
+
+    const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
+    if (currentPage > 0) {
+        paginationButtons.push({ text: "⬅️", callback_data: `admin_subnets_${currentPage - 1}` });
+    }
+    if (totalPages > 1) {
+        paginationButtons.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "noop" });
+    }
+    if (currentPage < totalPages - 1) {
+        paginationButtons.push({ text: "➡️", callback_data: `admin_subnets_${currentPage + 1}` });
+    }
+
+    if (paginationButtons.length > 0) {
+        inline_keyboard.push(paginationButtons);
+    }
+    
+    inline_keyboard.push([
+		{ text: "➕ Добавить", callback_data: "admin_create_subnet" },
+		{ text: "➖ Удалить", callback_data: "admin_delete_subnet" },
+	]);
+    inline_keyboard.push([{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]);
+	
+	await botInstance.editMessageCaption(messageText, {
+		chat_id: chatId,
+		message_id: messageId,
+		reply_markup: { inline_keyboard }
+	});
+	
+    logActivity(`Admin ${chatId} requested ip subnets list (page ${page})`);
+}
+
+export async function handleSubnetCreation(chatId: number, userId: number, messageId: number) {
+	const user = db.getUser(userId);
+	
+	const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+		[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
+	];
+	
+	const text = `📌 Напишите список IP в виде:\nName: название\nList: список IP через запятую\n<b>ИЛИ</b>\nSource: функция источника`
+	const reply = await botInstance.editMessageCaption(text, {
+		chat_id: chatId,
+		message_id: messageId,
+		parse_mode: 'HTML',
+		reply_markup: { inline_keyboard }
+	});
+	
+	db.updateUser(chatId, { state: { action: 'admin_subnet_creation', messageId: reply.message_id }})
+	
+    logActivity(`Admin ${chatId} started config creation`);
+}
+
+export async function handleSubnetCreationText(userId: number, input: string) {
+	const user = db.getUser(userId);
+	
+	const args = input.split('\n');
+	console.log(args);
+	
+	const name   = args.find(x => x.startsWith('Name: '))?.slice('Name: '.length);
+	const ips    = args.find(x => x.startsWith('List: '))?.slice('List: '.length);
+	const source = args.find(x => x.startsWith('Source: '))?.slice('Source: '.length);
+	
+	if (!name) return await botInstance.sendMessage(userId, "Вы не указали имя списка (Name: )");
+	else if (name.length < 4 || name.length > 20)
+			   return await botInstance.sendMessage(userId, "Имя списка не вписывается в диапазон 4 - 20 символов.");
+	if (!ips && !source) return await botInstance.sendMessage(userId, "Вы не указали список или источник.");
+	
+	const subnets = db.getSubnets();
+	const keys = Object.keys(subnets);
+	const latestIdx: number = +keys[keys.length - 1];
+	subnets[latestIdx + 1] = {
+		name,
+		creator: userId,
+		createdAt: Date.now(),
+		...(ips ? { ips } : {}),
+		...(source ? { source } : {}),
+	}
+	console.log(subnets)
+	
+	botInstance.deleteMessage(userId, user.state.messageId);
+	await botInstance.sendMessage(userId, `Список IP успешно создан.`);
+	
+	db.updateUser(userId, { state: undefined });
+	
+    logActivity(`Admin ${userId} finished config creation`);
+}
+
+export async function handleSubnetDeletion(chatId: number, userId: number, messageId: number) {
+	const user = db.getUser(userId);
+	
+	const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+		[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
+	];
+	
+	const text = `📌 Напишите идентификатор списка IP для удаления`
+	const reply = await botInstance.editMessageCaption(text, {
+		chat_id: chatId,
+		message_id: messageId,
+		parse_mode: 'HTML',
+		reply_markup: { inline_keyboard }
+	});
+	
+	db.updateUser(chatId, { state: { action: 'admin_subnet_deletion', messageId: reply.message_id }})
+	
+    logActivity(`Admin ${chatId} started config deletion`);
+}
+
+export async function handleSubnetDeletionText(userId: number, input: string) {
+	const user = db.getUser(userId);
+	
+	const subnets = db.getSubnets();
+	
+	const subnet = subnets[input];
+	if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
+	
+	delete subnets[input];
+	
+	botInstance.deleteMessage(userId, user.state.messageId);
+	await botInstance.sendMessage(userId, `Список IP успешно удален.`);
+	
+	db.updateUser(userId, { state: undefined });
+	
+    logActivity(`Admin ${userId} finished config deletion`);
+}
+
+export async function handleSubnetInfo(userId: number, id: number) {
+	//const user = db.getUser(userId);
+	
+	const subnets = db.getSubnets();
+	
+	const subnet = subnets[id];
+	if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
+	
+	try {
+		let ips = [];
+		if (subnet.ips?.length) ips = subnet.ips;
+		else if (subnet.source) {
+			ips = await sourceEval(subnet.source);
+		}
+		
+		console.log(ips)
+		
+		await botInstance.sendMessage(userId, `Список IP: ${ips.join(', ')}` + (subnet.source ? `\nФункция: ${subnet.source}` : ''));
+		
+		logActivity(`Admin ${userId} finished config deletion`);
+	} catch (e) {
+		console.log("Ошибка!", e)
+		await botInstance.sendMessage(userId, `Не удалось получить список IP!`);
+	}
 }
 
 export async function handleAdminListAllConfigs(chatId: number, page: number) {
