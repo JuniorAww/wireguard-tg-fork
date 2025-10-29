@@ -12,7 +12,7 @@ import { initCallbackQueryHandler, handleCallbackQuery } from '$/handlers/callba
 import { logActivity } from '$/utils/logger';
 import { sendCachedMedia } from '$/utils/images';
 
-process.env.NTBA_FIX_350 = true; // deprecation log fix
+process.env.NTBA_FIX_350 = 'true'; // deprecation log fix
 
 /* =================================
  Конфигурация устройств - из файла
@@ -62,6 +62,8 @@ db.loadDb();
 initWgEasyApi(appConfig);
 
 const bot = new TelegramBot(appConfig.telegramBotToken, { polling: true });
+// TODO fix
+// @ts-ignore
 bot.sendCachedMedia = sendCachedMedia;
 
 initUserFlow(bot, devices, appConfig);
@@ -70,7 +72,7 @@ initCallbackQueryHandler(bot, appConfig);
 
 logActivity("Bot started successfully. Polling for updates...");
 console.log("Telegram Bot успешно запущен и готов к работе!");
-console.log(`Admin ID: ${appConfig.adminTelegramId}`);
+console.log(`Admin IDs: ${appConfig.adminTelegramIds.join(', ')}`);
 console.log(`wg-easy API URL: ${appConfig.wgEasyApiUrl}`);
 
 
@@ -96,7 +98,7 @@ bot.onText(/🛡 Wireguard/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user && user.hasAccess) {
         logActivity(`User ${msg.from!.id} selected '🛡 Wireguard'`);
-        await userFlow.handleCreateWgConfigStart(msg.chat.id, msg.from!.id);
+        await userFlow.handleCreateWgConfigStart(msg.chat.id, msg.from!.id, NaN);
     }
 });
 
@@ -105,53 +107,53 @@ bot.onText(/📄 Мои конфиги/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user && user.hasAccess) {
         logActivity(`User ${msg.from!.id} selected '📄 Мои конфиги'`);
-        await userFlow.handleListMyConfigs(msg.chat.id, msg.from!.id, 0);
+        await userFlow.handleListMyConfigs(msg.chat.id, msg.from!.id, NaN, 0);
     }
 });
 
 // TODO убрать
-bot.onText(/👑 Админ-панель/, async (msg) => {
+/*bot.onText(/👑 Админ-панель/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '👑 Админ-панель'`);
         await adminFlow.showAdminMainMenu(msg.chat.id);
     }
-});
+});*/
 
 /* ==============
  Команды админа
 ============== */
 
-// TODO убрать
+/* TODO убрать
 bot.onText(/👥 Пользователи/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '👥 Пользователи'`);
-        await adminFlow.handleAdminListUsers(msg.chat.id, 0);
+        await adminFlow.handleAdminListUsers(msg.chat.id, null, 0);
     }
-});
+});*/
 
-// TODO убрать
+/* TODO убрать
 bot.onText(/⚙️ Все конфиги/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '⚙️ Все конфиги'`);
-        await adminFlow.handleAdminListAllConfigs(msg.chat.id, 0);
+        await adminFlow.handleAdminListAllConfigs(msg.chat.id, null, 0);
     }
-});
+});*/
 
-// TODO убрать
+/* TODO убрать
 bot.onText(/📊 Статистика/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '📊 Статистика'`);
         await adminFlow.handleAdminShowUsageStats(msg.chat.id);
     }
-});
+});*/
 
-// TODO убрать
+/* TODO убрать
 bot.onText(/📝 Просмотр логов/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '📝 Просмотр логов'`);
         await adminFlow.handleAdminViewLogs(msg.chat.id);
     }
-});
+});*/
 
 bot.onText(/⚡ Открыть главное меню/, async (msg) => {
     const user = db.getUser(msg.from!.id);
@@ -177,8 +179,8 @@ bot.onText(/\/cancel/, async (msg) => {
     
     logActivity(`User ${userId} sent /cancel`);
     
-    if (user.state?.messageId) {
-		await bot.editMessageText(msg.chat.id, user.state.messageId, "❌ Действие отменено")
+    if (user?.state?.messageId) {
+		await bot.editMessageText("❌ Действие отменено", { chat_id: msg.chat.id, message_id: user.state.messageId })
 	}
     else await bot.sendMessage(msg.chat.id, "Действие отменено.");
     db.updateUser(userId, { state: undefined });
@@ -220,11 +222,11 @@ bot.on('message', async (msg) => {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
     } 
-    else if (user && user.state && user.state.action === 'admin_subnet_creation') {
+    else if (user && user.state && user.state.action === 'admin_subnet_creation' && msg.text) {
         logActivity(`Received text message from ${userId} for subnet creation: "${msg.text}"`);
         await adminFlow.handleSubnetCreationText(userId, msg.text);
     } 
-    else if (user && user.state && user.state.action === 'admin_subnet_deletion') {
+    else if (user && user.state && user.state.action === 'admin_subnet_deletion' && msg.text) {
         logActivity(`Received text message from ${userId} for subnet deletion: "${msg.text}"`);
         await adminFlow.handleSubnetDeletionText(userId, msg.text);
     } 

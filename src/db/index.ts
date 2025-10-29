@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Database, User, AccessRequest } from '$/db/types.ts';
+import { Database, User, AccessRequest, UserConfig, Subnet } from '$/db/types';
 import { logActivity } from '$/utils/logger';
 
 const dbFilePath = path.join(process.cwd(), 'data', 'database.json');
@@ -35,11 +35,11 @@ export function loadDb(): void {
 }
 
 function updateTables(database: Database) {
-	const sampleUserId = Object.keys(database.users)[0];
+	const sampleUserId: string = Object.keys(database.users)[0];
 	console.log('Sample user ID', sampleUserId);
 	if (!sampleUserId) return;
 	
-	const sampleUser = database.users[sampleUserId];
+	const sampleUser: User = database.users[+sampleUserId];
 	console.log('Sample user', sampleUser);
 	
 	if (!sampleUser.subnets) {

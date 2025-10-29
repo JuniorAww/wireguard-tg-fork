@@ -1,11 +1,11 @@
 const INT_MAX = 2 ** 32;
 
-export async function sourceEval(source) {
+export async function sourceEval(source: string) {
 	const asyncEval = new Function(`return (async () => { return ${source} })();`);
 	return await asyncEval();
 }
 
-export function getAllowedIPs(allow, block) {
+export function getAllowedIPs(allow: string[], block: string[]) {
 	let allowedIPs = allow.map(c => cidrToRange(c))
 	let blockedIPs = block.map(c => cidrToRange(c))
 	
@@ -14,7 +14,7 @@ export function getAllowedIPs(allow, block) {
 	
 	const result = calculate(allowedRanges, blockedRanges)
 	
-	const cleaned = result.reduce((acc, [start, end]) => {
+	const cleaned = result.reduce<[number, number][]>((acc, [start, end]) => {
 		const s = Math.max(0, start);
 		const e = Math.min(INT_MAX - 1, end);
 		if (s <= e) acc.push([s, e]);
@@ -32,13 +32,13 @@ export function getAllowedIPs(allow, block) {
 	return cidrs;
 }
 
-function getRanges(array) {
+function getRanges(array: [number, number][]): [number, number][] {
     if (array.length === 0) return [];
-	
+
     array.sort((a, b) => a[0] - b[0]);
-    
-    const result = [ array[0] ];
-    
+
+    const result: [number, number][] = [array[0]];
+
     for (let i = 1; i < array.length; i++) {
         const last = result[result.length - 1];
         if (last[1] + 1 >= array[i][0]) {
@@ -47,16 +47,17 @@ function getRanges(array) {
             result.push(array[i]);
         }
     }
-    
+
     return result;
 }
 
-function calculate(allowedRange, disallowedRange) {
-    let result = [...allowedRange];
-    
+
+function calculate(allowedRange: [number, number][], disallowedRange: [number, number][]): [number, number][] {
+    let result: [number, number][] = [...allowedRange];
+
     for (const disallowed of disallowedRange) {
-        const newResult = [];
-        
+        const newResult: [number, number][] = [];
+
         for (const allowed of result) {
             if (allowed[1] < disallowed[0] || allowed[0] > disallowed[1]) {
                 newResult.push(allowed);
@@ -64,20 +65,20 @@ function calculate(allowedRange, disallowedRange) {
                 if (allowed[0] < disallowed[0]) {
                     newResult.push([allowed[0], disallowed[0] - 1]);
                 }
-                
+
                 if (allowed[1] > disallowed[1]) {
                     newResult.push([disallowed[1] + 1, allowed[1]]);
                 }
             }
         }
-        
+
         result = newResult;
     }
-    
+
     return result;
 }
 
-function outputRange(start, end) {
+function outputRange(start: number, end: number) {
 	const result = [];
     let current = Number(start);
 	
@@ -111,21 +112,21 @@ function outputRange(start, end) {
 	return result;
 }
 
-function cidrToRange(cidr) {
+function cidrToRange(cidr: string): [number, number] {
     const parts = cidr.trim().split('/');
-    const [ip, maskStr] = parts;
-    
+    const [ ip, maskStr ] = parts;
+
     const mask = parseInt(maskStr, 10);
     const ipInt = ip2Int(ip.trim());
-    
+
     const blockSize = mask === 0 ? INT_MAX : Math.pow(2, 32 - mask);
     const start = Math.floor(ipInt / blockSize) * blockSize;
     const end = (start + blockSize - 1) >>> 0;
-    
+
     return [start >>> 0, end >>> 0];
 }
 
-const sorted = array => {
+const sorted = (array: string[]) => {
     for (let x = 0; x < array.length - 1; x++) {
         for (let y = 0; y < array.length - x - 1; y++) {
             const a = array[y].split("/")[0];
@@ -142,10 +143,10 @@ const sorted = array => {
     return array;
 }
 
-const ip2Int = ip => {
+const ip2Int = (ip: string) => {
     const parts = ip.trim().split(".");
     
-    return parts.reduce((a, b) => {
+    return parts.reduce((a: number, b: string) => {
         return a * 256 + parseInt(b, 10);
     }, 0) >>> 0;
 }
@@ -153,7 +154,7 @@ const ip2Int = ip => {
 const S256 = 256 * 256;
 const SS256 = S256 * 256;
 
-const int2Ip = num => {
+const int2Ip = (num: number) => {
     return [
         Math.floor(num / SS256) % 256,
         Math.floor(num / S256) % 256,

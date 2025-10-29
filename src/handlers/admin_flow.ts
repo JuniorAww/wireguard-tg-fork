@@ -1,5 +1,5 @@
-import TelegramBot from 'node-telegram-bot-api';
-import { User, AppConfig, UserConfig } from '$/db/types';
+import TelegramBot, { Message } from 'node-telegram-bot-api';
+import { User, AppConfig, UserConfig, Subnet, CallbackButton } from '$/db/types';
 import { logActivity } from '$/utils/logger';
 import { generateMonthlyUsageChart, generateTopUsersChart } from '$/utils/chart';
 import { getUsageText } from '$/utils/text';
@@ -19,7 +19,7 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
 }
 
 export async function showAdminMainMenu(chatId: number, messageId: number) {
-    const inline_keyboard: TelegramBot.KeyboardButton[][] = [
+    const inline_keyboard: CallbackButton[][] = [
         [{ text: "👥 Пользователи", callback_data: "admin_list_users_page_0" },
         { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
         [{ text: "📝 Просмотр логов", callback_data: "admin_view_logs" },
@@ -111,7 +111,7 @@ export async function handleDenyAccess(adminChatId: number, userIdToDeny: number
 }
 
 export async function handleAdminListUsers(chatId: number, page: number) {
-    const usersWithAccess = db.getAllUsersWithAccess().filter(u => u.id !== appConfigInstance.adminTelegramId);
+    const usersWithAccess = db.getAllUsersWithAccess().filter(u => !appConfigInstance.adminTelegramIds.includes(u.id));
     const ITEMS_PER_PAGE = 10;
 
     if (usersWithAccess.length === 0) {
@@ -183,8 +183,6 @@ export async function handleSubnetList(chatId: number, messageId: number, page: 
     const totalPages = Math.ceil(Object.keys(subnets).length / ITEMS_PER_PAGE);
     const currentPage = Math.max(0, Math.min(page, totalPages - 1));
     
-    console.log(subnets, subnets.length, currentPage)
-	
     const startIndex = currentPage * ITEMS_PER_PAGE;
     const pageIps = Object.entries(subnets).slice(startIndex, startIndex + ITEMS_PER_PAGE);
 	
@@ -245,7 +243,7 @@ export async function handleSubnetCreation(chatId: number, userId: number, messa
 		reply_markup: { inline_keyboard }
 	});
 	
-	db.updateUser(chatId, { state: { action: 'admin_subnet_creation', messageId: reply.message_id }})
+	db.updateUser(chatId, { state: { action: 'admin_subnet_creation', messageId: (reply as Message).message_id }})
 	
     logActivity(`Admin ${chatId} started config creation`);
 }
@@ -254,10 +252,9 @@ export async function handleSubnetCreationText(userId: number, input: string) {
 	const user = db.getUser(userId);
 	
 	const args = input.split('\n');
-	console.log(args);
 	
 	const name   = args.find(x => x.startsWith('Name: '))?.slice('Name: '.length);
-	const ips    = args.find(x => x.startsWith('List: '))?.slice('List: '.length);
+	const ips    = args.find(x => x.startsWith('List: '))?.slice('List: '.length)?.split(',')?.map(x => x.trim());
 	const source = args.find(x => x.startsWith('Source: '))?.slice('Source: '.length);
 	
 	if (!name) return await botInstance.sendMessage(userId, "Вы не указали имя списка (Name: )");
@@ -275,9 +272,9 @@ export async function handleSubnetCreationText(userId: number, input: string) {
 		...(ips ? { ips } : {}),
 		...(source ? { source } : {}),
 	}
-	console.log(subnets)
 	
-	botInstance.deleteMessage(userId, user.state.messageId);
+	if (user?.state?.messageId)
+		botInstance.deleteMessage(userId, user.state.messageId);
 	await botInstance.sendMessage(userId, `Список IP успешно создан.`);
 	
 	db.updateUser(userId, { state: undefined });
@@ -300,7 +297,7 @@ export async function handleSubnetDeletion(chatId: number, userId: number, messa
 		reply_markup: { inline_keyboard }
 	});
 	
-	db.updateUser(chatId, { state: { action: 'admin_subnet_deletion', messageId: reply.message_id }})
+	db.updateUser(chatId, { state: { action: 'admin_subnet_deletion', messageId: (reply as Message).message_id }})
 	
     logActivity(`Admin ${chatId} started config deletion`);
 }
@@ -308,14 +305,15 @@ export async function handleSubnetDeletion(chatId: number, userId: number, messa
 export async function handleSubnetDeletionText(userId: number, input: string) {
 	const user = db.getUser(userId);
 	
-	const subnets = db.getSubnets();
+	const subnets: Record<string, Subnet> = db.getSubnets();
 	
 	const subnet = subnets[input];
 	if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
 	
 	delete subnets[input];
 	
-	botInstance.deleteMessage(userId, user.state.messageId);
+	if (user?.state?.messageId)
+		botInstance.deleteMessage(userId, user.state.messageId);
 	await botInstance.sendMessage(userId, `Список IP успешно удален.`);
 	
 	db.updateUser(userId, { state: undefined });
@@ -326,7 +324,7 @@ export async function handleSubnetDeletionText(userId: number, input: string) {
 export async function handleSubnetInfo(userId: number, id: number) {
 	//const user = db.getUser(userId);
 	
-	const subnets = db.getSubnets();
+	const subnets: Record<string, Subnet> = db.getSubnets();
 	
 	const subnet = subnets[id];
 	if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
@@ -559,7 +557,7 @@ export async function handleAdminRevokeAccessConfirm(adminChatId: number, userId
 }
 
 
-export async function handleAdminViewConfig(adminChatId: number, ownerId: number, wgEasyClientId: string) {
+export async function handleAdminViewConfig(adminChatId: number, ownerId: number, messageId: number | undefined, wgEasyClientId: string) {
     const placeholderMessage = await botInstance.sendMessage(adminChatId, `👑 Админ: Загрузка деталей конфига...`);
 
     try {
@@ -686,7 +684,7 @@ export async function handleAdminConfigAction(adminChatId: number, actionWithPre
             owner.configs[configIndexInDb].isEnabled = false;
             db.updateUser(ownerId, { configs: owner.configs });
             logActivity(`Admin ${adminChatId} disabled config ${wgEasyClientId} for user ${ownerId}`);
-            await handleAdminViewConfig(adminChatId, ownerId, wgEasyClientId);
+            await handleAdminViewConfig(adminChatId, ownerId, undefined, wgEasyClientId);
         } else {
             await botInstance.sendMessage(adminChatId, "Не удалось отключить конфигурацию через API.");
         }

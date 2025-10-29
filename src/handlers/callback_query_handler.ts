@@ -83,12 +83,6 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}
-			if (data.startsWith('select_config_owner_')) {
-				const userId = data.substring('select_config_owner'.length);
-				await userFlow.handleConfigOwnerInput(userId, messageId);
-				await botInstance.answerCallbackQuery(query.id);
-				return;
-			}
 			if (data.startsWith('select_device_')) {
 				const deviceId = data.substring('select_device_'.length);
 				await userFlow.handleDeviceSelection(chatId, userId, messageId, deviceId);
@@ -96,7 +90,8 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 				return;
 			}
 			if (data.startsWith('config_owner_skip')) {
-				await userFlow.handleConfigOwnerInput(query.message, true, true);
+				if (query.message !== undefined)
+					await userFlow.handleConfigOwnerInput(query.message, true, true);
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}
@@ -107,20 +102,12 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 		&& appConfigInstance.adminTelegramIds.includes(userId)
 		/*&& db.getUser(userId).role === 2*/) {
 			if (data.startsWith('approve_access_')) {
-				if (userId !== appConfigInstance.adminTelegramId) {
-					await botInstance.answerCallbackQuery(query.id, { text: "Это действие доступно только администратору." });
-					return;
-				}
 				const userIdToApprove = parseInt(data.split('_')[2]);
 				await adminFlow.handleApproveAccess(chatId, userIdToApprove, messageId);
 				await botInstance.answerCallbackQuery(query.id, { text: "Доступ одобрен." });
 				return;
 			}
 			if (data.startsWith('deny_access_')) {
-				if (userId !== appConfigInstance.adminTelegramId) {
-					await botInstance.answerCallbackQuery(query.id, { text: "Это действие доступно только администратору." });
-					return;
-				}
 				const userIdToDeny = parseInt(data.split('_')[2]);
 				await adminFlow.handleDenyAccess(chatId, userIdToDeny, messageId);
 				await botInstance.answerCallbackQuery(query.id, { text: "Доступ отклонен." });
@@ -170,7 +157,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 				const parts = data.substring('admin_view_config_'.length).split('_');
 				const ownerId = parseInt(parts[0]);
 				const wgEasyClientId = parts[1];
-				await adminFlow.handleAdminViewConfig(chatId, ownerId, wgEasyClientId);
+				await adminFlow.handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}
@@ -183,7 +170,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 					return;
 				}
 				const targetConfig = allConfigs[globalIndex];
-				await adminFlow.handleAdminViewConfig(chatId, targetConfig.ownerId, targetConfig.wgEasyClientId);
+				await adminFlow.handleAdminViewConfig(chatId, targetConfig.ownerId, messageId, targetConfig.wgEasyClientId);
 				await botInstance.answerCallbackQuery(query.id);
 				return;
 			}

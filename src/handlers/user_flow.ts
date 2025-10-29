@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage, hourlyUsageHistory, getMonthlyUsage } from '$/api/connections';
 import { handleAdminViewConfig, handleAdminListAllConfigs } from '$/handlers/admin_flow'
-import { User, Device, AppConfig, CallbackButton } from '$/db/types';
+import { User, Device, UserConfig, AppConfig, CallbackButton, Subnet } from '$/db/types';
 import { getUsageText, escapeConfigName } from '$/utils/text'
 import { generateUsageChart, generateMonthlyUsageChart } from '$/utils/chart';
 import { logActivity } from '$/utils/logger';
@@ -58,8 +58,13 @@ export async function handleStart(msg: TelegramBot.Message) {
     }
 }
 
-export async function showMainMenu(chatId: number, userId: number, messageId: number) {
+export async function showMainMenu(chatId: number, userId: number, messageId?: number) {
 	const user = db.getUser(userId);
+	if (!user) {
+		console.log('No user');
+		await botInstance.sendMessage(chatId, "Ошибка отправки меню.")
+		return;
+	}
 	
     db.updateUser(userId, { state: undefined });
     const isAdmin = appConfigInstance.adminTelegramIds.includes(userId);
@@ -69,9 +74,9 @@ export async function showMainMenu(chatId: number, userId: number, messageId: nu
         [{ text: "❓ Плохо работает VPN" }],
     ];
     
-    const inline_keyboard: TelegramBot.KeyboardButton[][] = [
+    const inline_keyboard: CallbackButton[][] = [
         [{ text: "📄 Мои конфиги", callback_data: "list_my_configs_page_0" }],
-        [{ text: "⚙️ Настройки", callback_data: "personal_settings" }],
+        [{ text: "⚙️ Настройки (WIP)", callback_data: "personal_settings" }],
     ];
     
     if (user.hasAccess) {
@@ -94,8 +99,6 @@ export async function showMainMenu(chatId: number, userId: number, messageId: nu
 	if (!mediaCached) {
 		placeholderMessage = await botInstance.sendMessage(chatId, "🔄 Загрузка статистики...", { 
 			reply_markup: { keyboard: bottomKeyboard },
-			resize_keyboard: true,
-			one_time_keyboard: false,
 		});
 	}
     
@@ -110,6 +113,8 @@ export async function showMainMenu(chatId: number, userId: number, messageId: nu
 			return await generateUsageChart(hourlyUsageWithHours)
 		}
 		
+		// TODO fix
+		// @ts-ignore
 		await botInstance.sendCachedMedia(chatId, messageId, {
 			uniqueKey: 'start',
 			media: getMediaFunction,
@@ -146,11 +151,12 @@ export async function showMainMenu(chatId: number, userId: number, messageId: nu
 }
 
 export async function handleRequestAccess(chatId: number, userId: number, username?: string) {
-    const adminId = appConfigInstance.adminTelegramId;
+    const adminIds = appConfigInstance.adminTelegramIds;
     const userIdentifier = username ? `@${username}` : `ID ${userId}`;
 
     try {
-        const adminMessage = await botInstance.sendMessage(adminId,
+		// TODO send all admins
+        const adminMessage = await botInstance.sendMessage(adminIds[0],
             `Пользователь ${userIdentifier} (ID: ${userId}) запрашивает доступ к боту.`,
             {
                 reply_markup: {
@@ -213,6 +219,7 @@ export async function handleDeviceSelection(chatId: number, userId: number, mess
 			}
     });
     
+    // @ts-ignore
     db.updateUser(userId, { state: { action: 'awaiting_config_name', data: { deviceId }, messageId: reply.message_id } });
 }
 
@@ -232,21 +239,23 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
 
 
     const user = db.getUser(userId);
-    if (!user || !user.state || user.state.action !== 'awaiting_config_name' || !user.state.data?.deviceId) {
+    if (!user || !user.state || user.state.action !== 'awaiting_config_name' || !user.state.data || !user.state.data.deviceId) {
         await botInstance.sendMessage(chatId, "Произошла ошибка или вы не завершили предыдущее действие. Пожалуйста, начните заново с /start.");
         db.updateUser(userId, { state: undefined });
         return;
     }
     
-    const deviceToShow = devices.find(d => d.id === user.state.data.deviceId);
-	botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}\n<b>Имя конфига:</b> ${configName}`, {
-		reply_markup: {
-			inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
-		},
-		parse_mode: 'HTML',
-		chat_id: chatId,
-		message_id: user.state?.messageId, 
-	})
+    const deviceToShow = devices.find(d => d.id === user.state?.data?.deviceId);
+    if (deviceToShow) {
+		botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}\n<b>Имя конфига:</b> ${configName}`, {
+			reply_markup: {
+				inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
+			},
+			parse_mode: 'HTML',
+			chat_id: chatId,
+			message_id: user.state?.messageId, 
+		})
+	}
 	
 	const reply = await botInstance.sendMessage(chatId, 
 	  "Теперь вы можете выбрать владельца конфига (если конфиг предназначен другому человеку)"
@@ -268,20 +277,25 @@ export async function handleConfigOwnerInput(msg: TelegramBot.Message, skip: boo
     const chatId = msg.chat.id;
     const userId = inline ? chatId : msg.from!.id;
     
-    if (!skip && !msg.forward_from) {
-        await botInstance.sendMessage(chatId, "Пожалуйста, перешлите сообщение от пользователя, на которого хотите повесить конфиг!");
-        return;
+	let ownerId: number;
+	let ownerDisplay: string;
+	
+	if (skip) {
+		ownerId = +userId;
+		ownerDisplay = msg.chat.first_name + ' (вы)';
+	}
+	else {
+		if (!msg.forward_from?.id) {
+			await botInstance.sendMessage(chatId, "Пожалуйста, перешлите сообщение от пользователя, на которого хотите повесить конфиг!");
+			return;
+		}
+		
+		ownerId = msg.forward_from.id;
+		ownerDisplay = msg.forward_from.first_name;
 	}
     
-    const ownerId = skip ? +userId : msg.forward_from?.id;
-    const ownerDisplay = skip ? (msg.chat.first_name + ' (вы)') : msg.forward_from.first_name;
-
-    if (!ownerId) {
-        await botInstance.sendMessage(chatId, "Не удалось получить юзера!");
-        return;
-    }
-    
     const user = db.getUser(userId);
+    if (!user) return;
     
 	const { configName, deviceId } = user.state?.data || {};
 	
@@ -293,21 +307,23 @@ export async function handleConfigOwnerInput(msg: TelegramBot.Message, skip: boo
     }
 	
 	const deviceToShow = devices.find(d => d.id === deviceId);
-	botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}`
-							  + `\n<b>Имя конфига:</b> ${configName}`
-							  + `\n<b>Владелец:</b> ID ${ownerDisplay}`, {
-		reply_markup: {
-			inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
-		},
-		parse_mode: 'HTML',
-		chat_id: chatId,
-		message_id: user.state?.messageId, 
-	})
+	if (deviceToShow) {
+		botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}`
+								  + `\n<b>Имя конфига:</b> ${configName}`
+								  + `\n<b>Владелец:</b> ID ${ownerDisplay}`, {
+			reply_markup: {
+				inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
+			},
+			parse_mode: 'HTML',
+			chat_id: chatId,
+			message_id: user.state?.messageId, 
+		});
+	}
 	
 	await createConfig(user, ownerId, chatId, configName, deviceId, ownerId);
 }
 
-async function createConfig(user, userId, chatId, configName, deviceId, ownerId) {
+async function createConfig(user: User, userId: number, chatId: number, configName: string, deviceId: string, ownerId: number) {
     const wgClientName = `user${ownerId}_${deviceId}_${Date.now()}`;
 	
 	const { message_id: savedMessageId } = await botInstance.sendMessage(chatId, `🔄 Создаю конфигурацию "${configName}" для устройства... Пожалуйста, подождите!`);
@@ -324,9 +340,9 @@ async function createConfig(user, userId, chatId, configName, deviceId, ownerId)
             return;
         }
 		
-		const owner = db.ensureUser(ownerId);
+		const owner: User = db.ensureUser(ownerId);
 		
-        const userConfig = {
+        const userConfig: UserConfig = {
 			creator: userId,
             userGivenName: configName,
             wgEasyClientId: newClient.id,
@@ -371,7 +387,7 @@ async function createConfig(user, userId, chatId, configName, deviceId, ownerId)
             await botInstance.sendMessage(chatId, "📸 Не удалось получить QR-код.");
         }
         
-        await showMainMenu(chatId, userId);
+        await showMainMenu(chatId, userId, undefined);
     } catch (error : any) {
         console.error("Error in config creation flow:", error);
         logActivity(`Error creating config for user ${ownerId}: ${error}`);
@@ -477,6 +493,8 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
 	let sentMessage;
 	
 	try {
+		// TODO fix
+		// @ts-ignore
 		await botInstance.sendCachedMedia(chatId, messageId, {
 			media: "config_list.png",
 			uniqueKey: 'configs',
@@ -501,7 +519,7 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
     const config = user.configs.find(c => c.wgEasyClientId === wgEasyClientId);
     if (!config) {
         await botInstance.sendMessage(chatId, "Конфигурация не найдена.");
-        await handleListMyConfigs(chatId, userId, 0);
+        await handleListMyConfigs(chatId, userId, messageId, 0);
         return;
     }
 
@@ -555,13 +573,15 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
 			[{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]
 		];
 		
-		async function getMediaFunction() {
+		async function getMediaFunction(config: UserConfig) {
 			return await generateMonthlyUsageChart(config.dailyUsage);
 		}
 		
+		// TODO fix
+		// @ts-ignore
 		await botInstance.sendCachedMedia(chatId, messageId, {
 			uniqueKey: 'config-' + config.wgEasyClientId,
-			media: getMediaFunction,
+			media: (config: UserConfig) => getMediaFunction(config),
 			expiresIn: 60 * 1000,
 			caption: text,
 			keyboard: inline_keyboard,
@@ -572,10 +592,10 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
     } catch (error) {
         console.error(`Failed to show config details with chart for ${wgEasyClientId}:`, error);
         logActivity(`Failed to show config details with chart for ${wgEasyClientId}: ${error}`);
-        await botInstance.editMessageText(`⚠️ Не удалось загрузить детали конфигурации с графиком.`, {
-            chat_id: chatId,
-            message_id: placeholderMessage.message_id,
-        });
+		await botInstance.editMessageText(`⚠️ Не удалось загрузить детали конфигурации с графиком.`, {
+			chat_id: chatId,
+			message_id: messageId,
+		});
     }
 }
 
@@ -599,27 +619,27 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
 		db.updateUser(userId, { subnets: {} });
 	}
     
-    console.log(action, user.subnets)
-    
-    const allSubnets = db.getSubnets();
+    const allSubnets: Record<string, Subnet> = db.getSubnets();
     const allExistingKeys = Object.keys(allSubnets);
     Object.keys(user.subnets).forEach(subnetId => {
 		if (!allExistingKeys.includes(subnetId)) delete user.subnets[subnetId];
 	})
     // TODO do updateUser
     
-    async function show() {
+    async function show(user: User) {
 		let caption = `📥 <b>Настройка .conf</b>`
 			       + `\nВы можете настроить разрешения (AllowedIPs), чтобы конфиг работал только на определенных сервисах`
 			       + `\n<b>Внимание:</b> разрешения плохо работают на Linux!`;
 		
 		const buttons = [];
 		
-		const subButtons = [];
-		console.log(allSubnets);
-		Object.entries(allSubnets).filter(([ subnetId ]) => user.subnets[subnetId] === undefined).map(([ subnetId, subnet ]) => {
-			subButtons.unshift({ text: `✖ ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` })
-		});
+		const subButtons: CallbackButton[] = [];
+		
+		Object.entries(allSubnets)
+		  .filter(([ subnetId ]) => user.subnets[subnetId] === undefined)
+		  .forEach(([ subnetId, subnet ]) => {
+			  subButtons.unshift({ text: `✖ ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` });
+		  });
 		
 		/*let allowedAmount = 0;
 		let blockedAmount = 0;*/
@@ -662,10 +682,10 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
 				const subnetKeys = Object.keys(user.subnets);
 				
 				if (subnetKeys.length !== 0) {
-					const subnets = Object.entries(user.subnets);
+					const subnets: [string, boolean][] = Object.entries(user.subnets);
 					
-					let allowed = [];
-					let blocked = [];
+					let allowed: string[] = [];
+					let blocked: string[] = [];
 					
 					// TODO if source, then do caching (each X minutes)
 					
@@ -708,9 +728,9 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
 			}
 		}
 		else if (action?.startsWith('swap')) {
-			const subnet = action.split('-')[1];
+			const subnet: number = +action.split('-')[1];
 			
-			const entry = user.subnets[subnet];
+			const entry: boolean = user.subnets[subnet];
 			
 			if (entry === undefined) user.subnets[subnet] = true;
 			else if (entry === true) user.subnets[subnet] = false;
@@ -718,10 +738,10 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
 			
 			db.updateUser(userId, { subnets: user.subnets });
 			
-			await show();
+			await show(user);
 		}
 		else {
-			await show();
+			await show(user);
 		}
 	} catch (e) {
 		console.log('Ошибка', e);
@@ -769,7 +789,7 @@ export async function handleConfigAction(chatId: number, userId: number, message
                     db.updateUser(userId, { configs: user.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" отключена.` }); // callback_query_handler
                     logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} disabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
-                    await refreshView(messageId);
+                    await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию.");
                 }
@@ -780,7 +800,7 @@ export async function handleConfigAction(chatId: number, userId: number, message
                     db.updateUser(userId, { configs: user.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" включена.` }); // callback_query_handler
                     logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} enabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
-                    await refreshView(messageId);
+                    await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось включить конфигурацию.");
                 }
@@ -872,7 +892,9 @@ export async function handleFeedbackInput(msg: TelegramBot.Message) {
     const messageToAdmin = `🔔 Новое сообщение обратной связи от пользователя ${userContact}:\n\n"${feedbackText}"`;
 
     try {
-        await botInstance.sendMessage(appConfigInstance.adminTelegramId, messageToAdmin);
+		for (const id of appConfigInstance.adminTelegramIds) {
+			await botInstance.sendMessage(id, messageToAdmin)
+		};
         await botInstance.sendMessage(chatId, "Спасибо! Ваше сообщение отправлено администратору.");
         logActivity(`User ${userId} sent feedback: "${feedbackText}"`);
     } catch (error : any) {

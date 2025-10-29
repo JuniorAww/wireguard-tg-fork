@@ -16,14 +16,16 @@ Chart.register([
 GlobalFonts.registerFromPath("./fonts/Inter_18pt-Medium.ttf", "Inter Regular");
 GlobalFonts.registerFromPath("./fonts/Inter_18pt-Bold.ttf", "Inter Bold");
 
-async function getChart(config, width, height) {
+async function getChart(config: any, width: number, height: number): Promise<Buffer> {
     const canvas = new Canvas(width, height);
     
     const ctx = canvas.getContext('2d');
     ctx.font = `12px Roboto Regular`;
     
-    const chart = new Chart(canvas, config);
+    const chart = new Chart(canvas as any, config);
     
+    // TODO fix
+    // @ts-ignore
 	const buffer = await canvas.toBuffer('image/png', { matte: 'white', compressionLevel: 0 });
 	chart.destroy();
 	
@@ -43,8 +45,6 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Pro
     )
     
     const [ _, size ] = getUsageText(largest).split(' ');
-    
-    console.log(size, _, getUsage(_, size))
     
     const txData = hourlyUsageHistory.map(h => getUsage(h.tx, size)); // в МБ
     const rxData = hourlyUsageHistory.map(h => getUsage(h.rx, size)); // в МБ
@@ -183,8 +183,6 @@ export async function generateTopUsersChart(userUsage: { name: string, usage: nu
     const [ _, size ] = getUsageText(largest).split(' ');
     const data = topUsers.map(u => getUsage(u.usage, size));
 	
-    console.log(topUsers, size, _, getUsage(_, size), data)
-    
 	const chartConfig = {
 		type: 'bar',
 		data: {

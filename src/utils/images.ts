@@ -1,14 +1,23 @@
+import TelegramBot, { EditMessageMediaOptions } from 'node-telegram-bot-api';
 import fs from 'fs';
 import path from 'path';
 
-const mediaCache = {};
+interface Cache {
+	photoId: string;
+	expiresAt: number;
+}
+
+const mediaCache: Record<string, Cache> = {};
 
 export function isMediaCached(uniqueKey: string) {
 	const cache = mediaCache[uniqueKey];
 	return cache !== undefined && cache.expiresAt > Date.now();
 }
 
-export async function sendCachedMedia(chatId: number, messageId?: number, params: any) {
+export async function sendCachedMedia(this: TelegramBot, 
+									  chatId: number,
+									  messageId: number,
+									  params: any) {
 	const {
 		uniqueKey,
 		media,
@@ -17,12 +26,11 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 		keyboard: inline_keyboard
 	} = params;
 	
-	const cache = mediaCache[uniqueKey];
+	const cache: Cache = mediaCache[uniqueKey];
 	
-	const messageParams = !messageId ? undefined : {
+	const messageParams: EditMessageMediaOptions = !messageId ? {} : {
 		chat_id: chatId,
 		message_id: messageId,
-		contentType: 'image/png',
 		reply_markup: { inline_keyboard },
 	};
 	
@@ -48,7 +56,7 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 	}
 	else {
 		let image: any;
-		let intermediaryFile: string;
+		let intermediaryFile: string | undefined;
 		
 		if (typeof media === 'function') {
 			image = await media(); // buffer
@@ -60,9 +68,9 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 			image = 'attach://' + file; // local file
 		}
 		else
-			throw new Error("unknown media type", typeof media);
+			throw new Error(`unknown media type: ${typeof media}`);
 		
-		let photoId;
+		let photoId: string | undefined;
 		
 		if (messageId) {
 			if (typeof media === 'function') {
@@ -79,7 +87,7 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 				media: image,
 			}, messageParams);
 			
-			photoId = response.photo[0].file_id;
+			if(typeof response !== 'boolean' && response.photo) photoId = response.photo[0].file_id;
 		}
 		else {
 			const response = await this.sendPhoto(chatId, image, {
@@ -88,16 +96,18 @@ export async function sendCachedMedia(chatId: number, messageId?: number, params
 				reply_markup: { inline_keyboard },
 			});
 			
-			photoId = response.photo[0].file_id;
+			if(typeof response !== 'boolean' && response.photo) photoId = response.photo[0].file_id;
 			nextMessageId = response.message_id;
 		}
 		
-		mediaCache[uniqueKey] = {
-			expiresAt: Date.now() + expiresIn,
-			photoId,
+		if (photoId) {
+			mediaCache[uniqueKey] = {
+				expiresAt: Date.now() + expiresIn,
+				photoId,
+			}
 		}
 		
-		if (intermediaryFile) {
+		if (intermediaryFile !== undefined) {
 			console.log('Unlinked intermediary file')
 			fs.unlinkSync(intermediaryFile)
 		}
