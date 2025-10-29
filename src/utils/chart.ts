@@ -1,6 +1,34 @@
-import ChartJsImage from 'chart.js-image';
+import { join } from 'path';
+import { CategoryScale, Chart, LinearScale, BarController, BarElement, Legend } from 'chart.js';
+import { Canvas, GlobalFonts } from '@napi-rs/canvas';
 import { HourlyUsage } from '$/api/connections';
 import { DailyUsage } from '$/db/types';
+import { getUsage, getUsageText } from '$/utils/text';
+
+Chart.register([
+	CategoryScale,
+	BarController,
+	BarElement,
+	LinearScale,
+	Legend,
+]);
+
+GlobalFonts.registerFromPath("./fonts/Inter_18pt-Medium.ttf", "Inter Regular");
+GlobalFonts.registerFromPath("./fonts/Inter_18pt-Bold.ttf", "Inter Bold");
+
+async function getChart(config, width, height) {
+    const canvas = new Canvas(width, height);
+    
+    const ctx = canvas.getContext('2d');
+    ctx.font = `12px Roboto Regular`;
+    
+    const chart = new Chart(canvas, config);
+    
+	const buffer = await canvas.toBuffer('image/png', { matte: 'white', compressionLevel: 0 });
+	chart.destroy();
+	
+    return buffer;
+}
 
 export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Promise<Buffer> {
     const labels = hourlyUsageHistory.map(h => {
@@ -8,8 +36,18 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Pro
         date.setHours(h.hour, 0, 0, 0);
         return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     });
-    const txData = hourlyUsageHistory.map(h => h.tx / (1024 * 1024)); // в МБ
-    const rxData = hourlyUsageHistory.map(h => h.rx / (1024 * 1024)); // в МБ
+    
+    const largest = Math.max(
+		hourlyUsageHistory.sort((a,b) => b.tx - a.tx)?.[0]?.tx || 0,
+        hourlyUsageHistory.sort((a,b) => b.tx - a.tx)?.[0]?.rx || 0
+    )
+    
+    const [ _, size ] = getUsageText(largest).split(' ');
+    
+    console.log(size, _, getUsage(_, size))
+    
+    const txData = hourlyUsageHistory.map(h => getUsage(h.tx, size)); // в МБ
+    const rxData = hourlyUsageHistory.map(h => getUsage(h.rx, size)); // в МБ
 
     const chartConfig = {
         type: 'bar',
@@ -17,30 +55,44 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Pro
             labels: labels,
             datasets: [
                 {
-                    label: 'Загружено (MB)',
+                    label: `Загружено (${size})`,
                     backgroundColor: 'rgba(255, 99, 132, 0.5)',
                     borderColor: 'rgb(255, 99, 132)',
+                    borderWidth: 3,
                     data: rxData,
+					borderSkipped: true,
                 },
                 {
-                    label: 'Скачано (MB)',
+                    label: `Скачано (${size})`,
                     backgroundColor: 'rgba(54, 162, 235, 0.5)',
                     borderColor: 'rgb(54, 162, 235)',
+                    borderWidth: 3,
                     data: txData,
+					borderSkipped: true,
                 },
             ],
         },
+        options: {
+			indexAxis: 'x',
+			scales: {
+			  x: {
+				beginAtZero: true,
+				...basicTicks
+			  },
+			  y: {
+				...basicTicks
+			  }
+			},
+			plugins: {
+			  legend: {
+				labels: basicTicks.ticks
+			  }
+			},
+			...ratioParams
+		}
     };
-
-    const chart = new ChartJsImage()
-        // @ts-ignore
-        .chart(chartConfig)
-        // @ts-ignore
-        .width(800)
-        // @ts-ignore
-        .height(400)
-        .backgroundColor('white');
-    return await chart.toBuffer();
+    
+    return await getChart(chartConfig, 800, 400);
 }
 
 export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): Promise<Buffer> {
@@ -49,6 +101,14 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
     const rxData: number[] = [];
 
     const today = new Date();
+    
+    const largest = Math.max(
+		dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.tx || 0,
+        dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.rx || 0
+    )
+    
+    const [ _, size ] = getUsageText(largest).split(' ');
+    
     for (let i = 29; i >= 0; i--) {
         const date = new Date(today);
         date.setDate(today.getDate() - i);
@@ -59,8 +119,8 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
 
         const usageForDay = dailyUsage.find(d => d.date === dateString);
 
-        txData.push(usageForDay ? usageForDay.tx / (1024 * 1024 * 1024) : 0);
-        rxData.push(usageForDay ? usageForDay.rx / (1024 * 1024 * 1024) : 0);
+        txData.push(usageForDay ? getUsage(usageForDay.tx, size) : 0);
+        rxData.push(usageForDay ? getUsage(usageForDay.rx, size) : 0);
     }
 
     const chartConfig = {
@@ -69,78 +129,114 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
             labels: labels,
             datasets: [
                 {
-                    label: 'Скачано (GB)',
+                    label: `Скачано (${size})`,
                     backgroundColor: 'rgba(54, 162, 235, 0.5)',
                     borderColor: 'rgb(54, 162, 235)',
+                    borderWidth: 3,
                     data: txData,
+					borderSkipped: true,
                 },
                 {
-                    label: 'Отправлено (GB)',
+                    label: `Отправлено (${size})`,
                     backgroundColor: 'rgba(255, 99, 132, 0.5)',
                     borderColor: 'rgb(255, 99, 132)',
+                    borderWidth: 3,
                     data: rxData,
+					borderSkipped: true,
                 },
             ],
         },
+        options: {
+			indexAxis: 'x',
+			scales: {
+			  x: {
+				beginAtZero: true,
+				title: {
+				  display: true,
+				  text: 'Трафик (GB)',
+				  font: { family: 'Roboto Bold', size: 16 },
+				  color: '#666'
+				},
+				...basicTicks
+			  },
+			  y: {
+				...basicTicks
+			  }
+			},
+			plugins: {
+			  legend: {
+				labels: basicTicks.ticks
+			  }
+			},
+			...ratioParams
+		}
     };
 
-    const chart = new ChartJsImage()
-        // @ts-ignore
-        .chart(chartConfig)
-        // @ts-ignore
-        .width(800)
-        // @ts-ignore
-        .height(400)
-        .backgroundColor('white');
-    return await chart.toBuffer();
+    return await getChart(chartConfig, 800, 400);
 }
 
 export async function generateTopUsersChart(userUsage: { name: string, usage: number }[]): Promise<Buffer> {
     const topUsers = userUsage.slice(0, 10).reverse();
 
     const labels = topUsers.map(u => u.name);
-    const data = topUsers.map(u => u.usage / (1024 * 1024 * 1024));
+    const largest = topUsers.sort((a,b) => b.usage - a.usage)?.[0]?.usage || 0;
+    const [ _, size ] = getUsageText(largest).split(' ');
+    const data = topUsers.map(u => getUsage(u.usage, size));
+	
+    console.log(topUsers, size, _, getUsage(_, size), data)
+    
+	const chartConfig = {
+		type: 'bar',
+		data: {
+			labels: labels,
+			datasets: [
+				{
+					backgroundColor: 'rgba(75, 192, 192, 0.5)',
+					borderColor: 'rgb(75, 192, 192)',
+                    borderWidth: 2,
+					data: data,
+				},
+			],
+		},
+		options: {
+			indexAxis: 'y',
+			scales: {
+				x: {
+					beginAtZero: true,
+					title: {
+						display: true,
+						text: `Всего использовано (${size})`,
+						...titleFont,
+					},
+					...basicTicks,
+				},
+				y: {
+					...basicTicks,
+				}
+			},
+			plugins: {
+				legend: {
+					display: false
+				}
+			},
+			...ratioParams
+		}
+	};
 
-    const chartConfig = {
-        type: 'horizontalBar',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Всего использовано (GB)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.5)',
-                    borderColor: 'rgb(75, 192, 192)',
-                    borderWidth: 1,
-                    data: data,
-                },
-            ],
-        },
-        options: {
-            scales: {
-                xAxes: [{
-                    ticks: {
-                        beginAtZero: true
-                    },
-                    scaleLabel: {
-                        display: true,
-                        labelString: 'Трафик (GB)'
-                    }
-                }]
-            },
-            legend: {
-                display: false
-            }
-        }
-    };
 
-    const chart = new ChartJsImage()
-        // @ts-ignore
-        .chart(chartConfig)
-        // @ts-ignore
-        .width(800)
-        // @ts-ignore
-        .height(500)
-        .backgroundColor('white');
+    return await getChart(chartConfig, 900, 450);
+}
 
-    return await chart.toBuffer();
+const basicTicks = {
+	ticks: { font: { family: 'Inter Regular', size: 12 }, color: '#888' }
+}
+
+const titleFont = {
+	font: { family: 'Inter Regular', size: 14 }, color: '#888'
+}
+
+const ratioParams = {
+	devicePixelRatio: 2,
+	responsive: false,
+	maintainAspectRatio: false,
 }

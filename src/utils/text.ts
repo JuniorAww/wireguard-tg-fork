@@ -1,5 +1,5 @@
-const KB = 1024;
-const MB = KB * 1024;
+const KB = 1000;
+const MB = KB * 1000;
 const GB = MB * 1000;
 const TB = GB * 1000;
 
@@ -11,6 +11,14 @@ export function getUsageText(bytes: number) {
     if (usage > MB) return (usage / MB).toFixed(1) + ' МБ';
     return                 (usage / KB).toFixed(1) + ' КБ';
     // мяу мяу? МЯУ?
+}
+
+export function getUsage(value: number, size: string) {
+	if (size === 'КБ') return +(value / KB).toFixed(1);
+	if (size === 'МБ') return +(value / MB).toFixed(1);
+	if (size === 'ГБ') return +(value / GB).toFixed(1);
+	if (size === 'ТБ') return +(value / TB).toFixed(1);
+	throw new Error("Неизвестная величина " + size);
 }
 
 const latinMap: Record<string, string> = {

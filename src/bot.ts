@@ -4,12 +4,13 @@ import path from 'path';
 import { AppConfig, Device, User } from '$/db/types';
 import * as userFlow from '$/handlers/user_flow';
 import * as adminFlow from '$/handlers/admin_flow';
+import { initUserFlow, handleStart } from '$/handlers/user_flow';
+import { initAdminFlow } from '$/handlers/admin_flow';
 import * as db from '$/db';
 import { initWgEasyApi } from '$/api/wg_easy_api';
-import { initUserFlow, handleStart, handleConfigNameInput } from '$/handlers/user_flow';
-import { initAdminFlow, handleAdminCommand } from '$/handlers/admin_flow';
 import { initCallbackQueryHandler, handleCallbackQuery } from '$/handlers/callback_query_handler';
 import { logActivity } from '$/utils/logger';
+import { sendCachedMedia } from '$/utils/images';
 
 /* =================================
  Конфигурация устройств - из файла
@@ -24,18 +25,26 @@ if (!fs.existsSync(devicesPath)) {
 export const devices: Device[] = JSON.parse(fs.readFileSync(devicesPath, 'utf-8'));
 logActivity("Device configuration loaded from config/devices.json.");
 
+const paramsPath = path.join(process.cwd(), 'config', 'params.json');
+if (!fs.existsSync(paramsPath)) {
+  console.error(`FATAL: Params file not found at ${paramsPath}`);
+  logActivity(`FATAL: Params file not found at ${paramsPath}`);
+  process.exit(1);
+}
+export const params: any = JSON.parse(fs.readFileSync(paramsPath, 'utf-8'));
+
 /* =============================================
  Загрузка конфигурации из переменных окружения
 ============================================= */
 
 const telegramBotToken = process.env.BOT_TOKEN;
-const adminTelegramId = process.env.ADMIN_TELEGRAM_ID;
+const adminTelegramIds = process.env.ADMIN_TELEGRAM_ID;
 const wgEasyApiUrl = process.env.WG_EASY_API_URL;
 
-if (!telegramBotToken || !adminTelegramId || !wgEasyApiUrl) {
+if (!telegramBotToken || !adminTelegramIds || !wgEasyApiUrl) {
     const missing = [
         !telegramBotToken && "BOT_TOKEN",
-        !adminTelegramId && "ADMIN_TELEGRAM_ID",
+        !adminTelegramIds && "ADMIN_TELEGRAM_ID",
         !wgEasyApiUrl && "WG_EASY_API_URL"
     ].filter(Boolean).join(', ')
     const errorMessage = `FATAL: Missing required environment variables: ${missing}. Please check your .env file.`;
@@ -46,7 +55,7 @@ if (!telegramBotToken || !adminTelegramId || !wgEasyApiUrl) {
 
 const appConfig: AppConfig = {
     telegramBotToken,
-    adminTelegramId: parseInt(adminTelegramId, 10),
+    adminTelegramIds: adminTelegramIds.split(',').map(id => parseInt(id, 10)),
     wgEasyApiUrl
 };
 logActivity("Application configuration loaded from environment variables.");
@@ -59,8 +68,9 @@ db.loadDb();
 initWgEasyApi(appConfig);
 
 const bot = new TelegramBot(appConfig.telegramBotToken, { polling: true });
+bot.sendCachedMedia = sendCachedMedia;
 
-initUserFlow(bot, devices, appConfig);
+initUserFlow(bot, devices, params, appConfig);
 initAdminFlow(bot, appConfig);
 initCallbackQueryHandler(bot, appConfig);
 
@@ -87,6 +97,7 @@ bot.onText(/❓ Плохо работает VPN/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/🛡 Wireguard/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user && user.hasAccess) {
@@ -95,6 +106,7 @@ bot.onText(/🛡 Wireguard/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/📄 Мои конфиги/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user && user.hasAccess) {
@@ -103,6 +115,7 @@ bot.onText(/📄 Мои конфиги/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/👑 Админ-панель/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '👑 Админ-панель'`);
@@ -114,6 +127,7 @@ bot.onText(/👑 Админ-панель/, async (msg) => {
  Команды админа
 ============== */
 
+// TODO убрать
 bot.onText(/👥 Пользователи/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '👥 Пользователи'`);
@@ -121,6 +135,7 @@ bot.onText(/👥 Пользователи/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/⚙️ Все конфиги/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '⚙️ Все конфиги'`);
@@ -128,6 +143,7 @@ bot.onText(/⚙️ Все конфиги/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/📊 Статистика/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '📊 Статистика'`);
@@ -135,6 +151,7 @@ bot.onText(/📊 Статистика/, async (msg) => {
     }
 });
 
+// TODO убрать
 bot.onText(/📝 Просмотр логов/, async (msg) => {
     if (msg.from?.id === appConfig.adminTelegramId) {
         logActivity(`Admin ${msg.from!.id} selected '📝 Просмотр логов'`);
@@ -142,7 +159,7 @@ bot.onText(/📝 Просмотр логов/, async (msg) => {
     }
 });
 
-bot.onText(/⬅️ Главное меню/, async (msg) => {
+bot.onText(/⚡ Открыть главное меню/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user && user.hasAccess) {
         logActivity(`User ${msg.from!.id} selected '⬅️ Главное меню'`);
@@ -151,20 +168,27 @@ bot.onText(/⬅️ Главное меню/, async (msg) => {
 });
 
 
-bot.onText(/\/admin/, async (msg) => {
+/*bot.onText(/\/admin/, async (msg) => {
     logActivity(`Received /admin command from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
     if (msg.from?.id === appConfig.adminTelegramId) {
-        await handleAdminCommand(msg);
+        await adminFlow.handleAdminCommand(msg);
     } else {
         await bot.sendMessage(msg.chat.id, "У вас нет прав для этой команды.");
     }
-});
+});*/
 
 bot.onText(/\/cancel/, async (msg) => {
     const userId = msg.from!.id;
+    const user = db.getUser(userId);
+    
     logActivity(`User ${userId} sent /cancel`);
+    
+    if (user.state?.messageId) {
+		await bot.editMessageText(msg.chat.id, user.state.messageId, "❌ Действие отменено")
+	}
+    else await bot.sendMessage(msg.chat.id, "Действие отменено.");
     db.updateUser(userId, { state: undefined });
-    await bot.sendMessage(msg.chat.id, "Действие отменено.");
+    
     if (db.getUser(userId)?.hasAccess) {
         await userFlow.showMainMenu(msg.chat.id, userId);
     }
@@ -180,9 +204,8 @@ bot.on('message', async (msg) => {
     if (!userId) return;
 
     const knownTextCommands = [
-        "🛡 Wireguard", "📄 Мои конфиги", "👑 Админ-панель",
-        "❓ Плохо работает VPN", "👥 Пользователи", "⚙️ Все конфиги", "📝 Просмотр логов", "📊 Статистика",
-        "⬅️ Главное меню"
+        "⚡ Открыть главное меню",
+        "❓ Плохо работает VPN",
     ];
 
     if (msg.text && (msg.text.startsWith('/') || knownTextCommands.includes(msg.text))) {
@@ -190,16 +213,22 @@ bot.on('message', async (msg) => {
     }
 
     const user = db.getUser(userId);
-
+console.log(user,user.state)
     if (user && user.state && user.state.action === 'awaiting_config_name') {
         logActivity(`Received text message from ${userId} potentially for config name: "${msg.text}"`);
-        await handleConfigNameInput(msg);
-    } else if (user && user.state && user.state.action === 'awaiting_feedback') {
+        await userFlow.handleConfigNameInput(msg);
+    } 
+    else if (user && user.state && user.state.action === 'awaiting_owner') {
+        logActivity(`Received text message from ${userId} potentially for owner name: "${msg.text}"`);
+        await userFlow.handleConfigOwnerInput(msg, false);
+	}
+    else if (user && user.state && user.state.action === 'awaiting_feedback') {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
-    } else if (msg.text) {
+    } 
+    else if (msg.text) {
         logActivity(`Received unhandled text message from ${userId}: "${msg.text}"`);
-        await bot.sendMessage(msg.chat.id, "Неизвестная команда. Пожалуйста, используйте кнопки или команды из меню.");
+        await bot.sendMessage(msg.chat.id, "Неизвестная команда.\nПожалуйста, используйте кнопки или команды из меню.");
     }
 });
 

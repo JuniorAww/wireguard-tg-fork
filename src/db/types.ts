@@ -10,6 +10,7 @@ export interface DailyUsage {
 }
 
 export interface UserConfig {
+	creator: number;
     userGivenName: string;
     wgEasyClientId: string; // ID клиента из wg-easy
     deviceId: string;

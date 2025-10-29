@@ -17,30 +17,31 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
     appConfigInstance = appCfg;
 }
 
-export async function handleAdminCommand(msg: TelegramBot.Message) {
-    const chatId = msg.chat.id;
-    const userId = msg.from!.id;
-
-    if (userId !== appConfigInstance.adminTelegramId) {
-        await botInstance.sendMessage(chatId, "Эта команда доступна только администратору.");
-        return;
-    }
-    await showAdminMainMenu(chatId);
-}
-
-export async function showAdminMainMenu(chatId: number) {
-    const keyboard: TelegramBot.KeyboardButton[][] = [
-        [{ text: "👥 Пользователи" }, { text: "⚙️ Все конфиги" }],
-        [{ text: "📝 Просмотр логов" }, { text: "📊 Статистика"}],
-        [{ text: "⬅️ Главное меню" }]
+export async function showAdminMainMenu(chatId: number, messageId: number) {
+    const inline_keyboard: TelegramBot.KeyboardButton[][] = [
+        [{ text: "👥 Пользователи", callback_data: "admin_list_users_page_0" },
+        { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
+        [{ text: "📝 Просмотр логов", callback_data: "admin_view_logs" },
+        { text: "📊 Статистика", callback_data: "admin_show_stats" }],
+        [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }],
     ];
-    await botInstance.sendMessage(chatId, "👑 Меню Администратора:", {
-        reply_markup: {
-            keyboard: keyboard,
-            resize_keyboard: true,
-            one_time_keyboard: false
-        }
-    });
+    try {
+		await botInstance.editMessageCaption("👑 <b>Меню администратора</b>", {
+			chat_id: chatId, message_id: messageId,
+			parse_mode: 'HTML',
+			reply_markup: {
+				inline_keyboard
+			}
+		});
+	} catch (e) {
+		await botInstance.editMessageText("👑 <b>Меню администратора</b>\nОтсюда вы можете управлять ботом!", {
+			chat_id: chatId, message_id: messageId,
+			parse_mode: 'HTML',
+			reply_markup: {
+				inline_keyboard
+			}
+		});
+	}
 }
 
 export async function handleApproveAccess(adminChatId: number, userIdToApprove: number, originalMsgId?: number) {

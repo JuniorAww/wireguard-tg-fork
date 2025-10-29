@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Database, User, AccessRequest, UserConfig } from '$/db/types';
+import { Database, User, AccessRequest } from '$/db/types.ts';
 import { logActivity } from '$/utils/logger';
 
 const dbFilePath = path.join(process.cwd(), 'data', 'database.json');
@@ -21,6 +21,7 @@ export function loadDb(): void {
         if (fs.existsSync(dbFilePath)) {
             const data = fs.readFileSync(dbFilePath, 'utf-8');
             database = JSON.parse(data);
+			updateTables(database);
             logActivity('Database loaded successfully.');
         } else {
             logActivity('No existing database found, starting with an empty one.');
@@ -30,6 +31,25 @@ export function loadDb(): void {
         console.error('Error loading database:', error);
         logActivity(`Error loading database: ${error}`);
     }
+}
+
+function updateTables(database: Database) {
+	const sampleUserId = Object.keys(database.users)[0];
+	if (!sampleUserId) return;
+	
+	const sampleUser = database.users[sampleUserId];
+	
+	if (!sampleUser.role) {
+        logActivity(`Config migration`);
+		
+		for (const userId in database.users) {
+			const user = database.users[userId]
+			//user.role = 2;
+			for (const c of user.configs) {
+				c.creator = user.id;
+			}
+		}
+	}
 }
 
 export function saveDb(): void {
@@ -46,6 +66,7 @@ export function saveDb(): void {
 // Автосохранение
 setInterval(saveDb, SAVE_INTERVAL);
 
+// TODO если user.username === null и в текущем контексте ее можно получить, установить
 export function getUser(userId: number): User | undefined {
     return database.users[userId];
 }
