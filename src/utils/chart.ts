@@ -2,7 +2,7 @@ import { join } from 'path';
 import { CategoryScale, Chart, LinearScale, BarController, BarElement, Legend } from 'chart.js';
 import { Canvas, GlobalFonts } from '@napi-rs/canvas';
 import { HourlyUsage } from '$/api/connections';
-import { DailyUsage } from '$/db/types';
+import { DailyUsage, UserSettings } from '$/db/types';
 import { getUsage, getUsageText } from '$/utils/text';
 
 Chart.register([
@@ -18,10 +18,6 @@ GlobalFonts.registerFromPath("./fonts/Inter_18pt-Bold.ttf", "Inter Bold");
 
 async function getChart(config: any, width: number, height: number): Promise<Buffer> {
     const canvas = new Canvas(width, height);
-    
-    const ctx = canvas.getContext('2d');
-    ctx.font = `12px Roboto Regular`;
-    
     const chart = new Chart(canvas as any, config);
     
     // TODO fix
@@ -32,7 +28,7 @@ async function getChart(config: any, width: number, height: number): Promise<Buf
     return buffer;
 }
 
-export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Promise<Buffer> {
+export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[], settings: UserSettings): Promise<Buffer> {
     const labels = hourlyUsageHistory.map(h => {
         const date = new Date();
         date.setHours(h.hour, 0, 0, 0);
@@ -46,9 +42,10 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[]): Pro
     
     const [ _, size ] = getUsageText(largest).split(' ');
     
-    const txData = hourlyUsageHistory.map(h => getUsage(h.tx, size)); // в МБ
-    const rxData = hourlyUsageHistory.map(h => getUsage(h.rx, size)); // в МБ
-
+    hourlyUsageHistory.sort((a,b) => a.hour - b.hour);
+    const txData = hourlyUsageHistory.map(h => getUsage(h.tx, size));
+    const rxData = hourlyUsageHistory.map(h => getUsage(h.rx, size));
+    
     const chartConfig = {
         type: 'bar',
         data: {
@@ -106,7 +103,7 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
 		dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.tx || 0,
         dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.rx || 0
     )
-    
+    console.log(dailyUsage)
     const [ _, size ] = getUsageText(largest).split(' ');
     
     for (let i = 29; i >= 0; i--) {
@@ -122,7 +119,7 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
         txData.push(usageForDay ? getUsage(usageForDay.tx, size) : 0);
         rxData.push(usageForDay ? getUsage(usageForDay.rx, size) : 0);
     }
-
+    
     const chartConfig = {
         type: 'bar',
         data: {

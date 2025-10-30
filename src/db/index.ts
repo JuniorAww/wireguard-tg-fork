@@ -78,6 +78,17 @@ function updateTables(database: Database) {
 			}
 		};
 	}
+    
+	if (!sampleUser.settings) {
+        logActivity(`Config migration №3`);
+		
+		for (const userId in database.users) {
+			const user = database.users[userId]
+			user.settings = {
+                utc: 2
+            }
+		}
+	}
 }
 
 export function saveDb(): void {
@@ -106,7 +117,8 @@ export function ensureUser(userId: number, username?: string): User {
             username: username,
             hasAccess: false,
             configs: [],
-            subnets: {}
+            subnets: {},
+            settings: { utc: 2 },
         };
         logActivity(`New user created: ${userId} (${username || 'N/A'})`);
     } else if (username && database.users[userId].username !== username) {

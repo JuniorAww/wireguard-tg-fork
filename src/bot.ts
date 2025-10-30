@@ -222,6 +222,10 @@ bot.on('message', async (msg) => {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
     } 
+    else if (user && user.state && user.state.action === 'set_timezone' && msg.text) {
+        logActivity(`Received text message from ${userId} for setting timezone: "${msg.text}"`);
+        await userFlow.handleSetTimezone(userId, msg.text);
+    } 
     else if (user && user.state && user.state.action === 'admin_subnet_creation' && msg.text) {
         logActivity(`Received text message from ${userId} for subnet creation: "${msg.text}"`);
         await adminFlow.handleSubnetCreationText(userId, msg.text);
@@ -229,7 +233,7 @@ bot.on('message', async (msg) => {
     else if (user && user.state && user.state.action === 'admin_subnet_deletion' && msg.text) {
         logActivity(`Received text message from ${userId} for subnet deletion: "${msg.text}"`);
         await adminFlow.handleSubnetDeletionText(userId, msg.text);
-    } 
+    }
     else if (msg.text) {
         logActivity(`Received unhandled text message from ${userId}: "${msg.text}"`);
         await bot.sendMessage(msg.chat.id, "Неизвестная команда.\nПожалуйста, используйте кнопки или команды из меню.");

@@ -16,10 +16,12 @@ export interface HourlyUsage {
     rx: number;
     tx: number;
 }
-export let hourlyUsageHistory: { rx: number, tx: number }[] = Array.from({ length: HOURLY_BUCKETS_COUNT }, () => ({ rx: 0, tx: 0 }));
+
+// UPD: теперь hourlyUsageHistory наполняется бесконечно, без сброса, начиная с 0 до 24. самый первый элемент - это текущий час
+export const hourlyUsageHistory: { rx: number, tx: number }[] = Array(HOURLY_BUCKETS_COUNT).fill(null).map(() => ({ rx: 0, tx: 0 }));
+
 let lastUpdateHour = new Date().getUTCHours();
 
-let lastUpdateDate = new Date().getUTCDate();
 export let lastHourUsage = { rx: 0, tx: 0 };
 
 function getTodayDateString(): string {
@@ -96,18 +98,17 @@ const updateConnectionInfos = async () => {
 
     // --- Статистика за последние 24 часа ---
     const currentHour = new Date().getUTCHours();
-    const currentDate = new Date().getUTCDate();
-
-    if (currentDate !== lastUpdateDate) {
-        hourlyUsageHistory = Array.from({ length: HOURLY_BUCKETS_COUNT }, () => ({ rx: 0, tx: 0 }));
-        lastUpdateDate = currentDate;
-    }
 
     if (currentHour !== lastUpdateHour) {
         lastUpdateHour = currentHour;
+        hourlyUsageHistory.unshift({ rx: 0, tx: 0 });
+        hourlyUsageHistory.pop();
     }
-    hourlyUsageHistory[currentHour].rx += currentDeltaRx;
-    hourlyUsageHistory[currentHour].tx += currentDeltaTx;
+    
+    hourlyUsageHistory[0].rx += currentDeltaRx + 123;
+    hourlyUsageHistory[0].tx += currentDeltaTx + 234;
+    
+    console.log(hourlyUsageHistory)
 
     usageHistory[currentBucketIndex] = { rx: currentDeltaRx, tx: currentDeltaTx };
     currentBucketIndex = (currentBucketIndex + 1) % BUCKETS_COUNT;
@@ -139,6 +140,7 @@ export function getTotalBandwidthUsage(configs: UserConfig[]): [number, number] 
 }
 
 export function getMonthlyUsage(config: UserConfig): { rx: number, tx: number } {
+    console.log(config)
     if (!config.dailyUsage) {
         return { rx: 0, tx: 0 };
     }
