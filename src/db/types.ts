@@ -10,6 +10,7 @@ export interface DailyUsage {
 }
 
 export interface UserConfig {
+	creator: number;
     userGivenName: string;
     wgEasyClientId: string; // ID клиента из wg-easy
     deviceId: string;
@@ -36,10 +37,12 @@ export interface User {
     accessRequestedAt?: string;
     accessGrantedAt?: string;
     configs: UserConfig[];
+    subnets: Record<string, boolean>;
     // Для отслеживания состояния в многошаговых операциях
     state?: {
-        action: string; // e.g., 'awaiting_config_name'
-        data?: any;     // e.g., { deviceId: 'macos_laptop' }
+        action: string;     // e.g., 'awaiting_config_name'
+        data?: any;         // e.g., { deviceId: 'macos_laptop' }
+        messageId?: number; // previous message number
     };
 }
 
@@ -53,11 +56,20 @@ export interface AccessRequest {
 export interface Database {
     users: Record<number, User>;
     accessRequests: Record<number, AccessRequest>; // Ключ - userId
+    subnets: Record<string, Subnet>;
+}
+
+export interface Subnet {
+	name: string;
+	creator: number; // Telegram ID
+	createdAt: number;
+	ips?: string[];
+	source?: string; // На будущее (источник, то есть URL или функция парсера)
 }
 
 export interface AppConfig {
     telegramBotToken: string;
-    adminTelegramId: number;
+    adminTelegramIds: number[];
     wgEasyApiUrl: string;
 }
 
