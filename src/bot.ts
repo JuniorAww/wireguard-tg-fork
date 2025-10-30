@@ -180,8 +180,8 @@ bot.onText(/\/cancel/, async (msg) => {
     logActivity(`User ${userId} sent /cancel`);
     
     if (user?.state?.messageId) {
-		await bot.editMessageText("❌ Действие отменено", { chat_id: msg.chat.id, message_id: user.state.messageId })
-	}
+        await bot.editMessageText("❌ Действие отменено", { chat_id: msg.chat.id, message_id: user.state.messageId })
+    }
     else await bot.sendMessage(msg.chat.id, "Действие отменено.");
     db.updateUser(userId, { state: undefined });
     
@@ -217,7 +217,7 @@ bot.on('message', async (msg) => {
     else if (user && user.state && user.state.action === 'awaiting_owner') {
         logActivity(`Received text message from ${userId} potentially for owner name: "${msg.text}"`);
         await userFlow.handleConfigOwnerInput(msg, false);
-	}
+    }
     else if (user && user.state && user.state.action === 'awaiting_feedback') {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
