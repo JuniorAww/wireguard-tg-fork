@@ -38,12 +38,19 @@ export interface User {
     accessGrantedAt?: string;
     configs: UserConfig[];
     subnets: Record<string, boolean>;
+    settings: UserSettings;
     // Для отслеживания состояния в многошаговых операциях
     state?: {
         action: string;     // e.g., 'awaiting_config_name'
         data?: any;         // e.g., { deviceId: 'macos_laptop' }
         messageId?: number; // previous message number
     };
+}
+
+export interface UserSettings {
+    utc: number;
+    city?: string;
+    chart?: any;
 }
 
 export interface AccessRequest {

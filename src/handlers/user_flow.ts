@@ -8,6 +8,7 @@ import { logActivity } from '$/utils/logger';
 import * as wgAPI from '$/api/wg_easy_api';
 import { isMediaCached } from '$/utils/images';
 import { getAllowedIPs, sourceEval } from '$/utils/ips';
+import { findCity, CityData } from '$/utils/timezone';
 import * as db from '$/db';
 import path from 'path';
 import fs from 'node:fs';
@@ -58,6 +59,28 @@ export async function handleStart(msg: TelegramBot.Message) {
     }
 }
 
+function getMainKeyboard(canCreateConfigs: boolean, isAdmin: boolean): CallbackButton[][] {
+    const merge = canCreateConfigs || isAdmin;
+    const keyboard: CallbackButton[][] = [];
+
+    if (merge) {
+        keyboard.push([
+            { text: "➕ Wireguard", callback_data: "create_wg_config_start" },
+            { text: "📄 Мои конфиги", callback_data: "list_my_configs_page_0" },
+        ]);
+    } else {
+        keyboard.push([{ text: "📄 Мои конфиги", callback_data: "list_my_configs_page_0" }]);
+    }
+
+    keyboard.push([{ text: "⚙️ Настройки", callback_data: "personal_settings" }]);
+
+    if (isAdmin) {
+        keyboard.push([{ text: "👑 Админ-панель", callback_data: "admin_main_menu" }]);
+    }
+
+    return keyboard;
+}
+
 export async function showMainMenu(chatId: number, userId: number, messageId?: number) {
     const user = db.getUser(userId);
     if (!user) {
@@ -74,18 +97,7 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
         [{ text: "❓ Плохо работает VPN" }],
     ];
     
-    const inline_keyboard: CallbackButton[][] = [
-        [{ text: "📄 Мои конфиги", callback_data: "list_my_configs_page_0" }],
-        [{ text: "⚙️ Настройки (WIP)", callback_data: "personal_settings" }],
-    ];
-    
-    if (user.hasAccess) {
-        inline_keyboard[0].unshift({ text: "➕ Wireguard", callback_data: "create_wg_config_start" })
-    }
-    
-    if (isAdmin) {
-        inline_keyboard.push([{ text: "👑 Админ-панель", callback_data: "admin_main_menu" }]);
-    }
+    const inline_keyboard: CallbackButton[][] = getMainKeyboard(user.hasAccess, isAdmin);
     
     const hourlyStats = `📊 <b>Статистика за час</b>`
                       + `\nСкачано ${getUsageText(lastHourUsage.tx)}, загружено ${getUsageText(lastHourUsage.rx)}`;
@@ -104,19 +116,23 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
     
     try {
         async function getMediaFunction() {
-            const currentHour = new Date().getUTCHours();
+            if (user === undefined) return "empty.png";
+            const currentHour = new Date().getUTCHours() + user.settings.utc;
+            
+            console.log(currentHour)
             
             const hourlyUsageWithHours = hourlyUsageHistory
-                .map((usage, hour) => ({ ...usage, hour }))
-                .slice(0, currentHour + 1);
+                .slice(0, user.settings.chart?.fullDay ? 24 : (currentHour % 24 + 1))
+                .map((usage, idx) => ({ ...usage, hour: currentHour - idx }))
+                .reverse();
             
-            return await generateUsageChart(hourlyUsageWithHours)
+            return await generateUsageChart(hourlyUsageWithHours, user.settings)
         }
         
         // TODO fix
         // @ts-ignore
         await botInstance.sendCachedMedia(chatId, messageId, {
-            uniqueKey: 'start',
+            uniqueKey: 'start-' + user.settings.utc, // TODO full settings hash instead of just only utc
             media: getMediaFunction,
             expiresIn: 60 * 1000,
             caption,
@@ -148,6 +164,85 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
             });
         }
     }
+}
+
+export async function handlePersonalSettings(chatId: number, userId: number, messageId: number) {
+    const user = db.getUser(userId);
+    if (!user) return;
+    
+    db.updateUser(userId, { state: undefined });
+    
+    const inline_keyboard = [
+        [{ text: "🌆 Часовой пояс: UTC+" + user.settings.utc, callback_data: `set_timezone` }],
+        [{ text: "⬅️ В главное меню", callback_data: `user_main_menu` }],
+    ]
+    
+    const caption = "⚙ <b>Персональные настройки</b>"
+    + "\nЗдесь можно настроить графики — например, используемый часовой пояс.";
+    
+    // TODO fix
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: 999999999,
+        caption,
+        keyboard: inline_keyboard
+    })
+}
+
+const handleTimezonesDefaultKeyboard: CallbackButton[][] = [
+    [
+        { text: "⬅️ Отменить и к настройкам", callback_data: `personal_settings` },
+    ]
+]
+
+export async function handleSetTimezoneStart(chatId: number, userId: number, messageId: number) {
+    const user = db.getUser(userId);
+    if (!user) return;
+    
+    const caption = "⚙ <b>Часовой пояс</b>"
+    + "\nНапишите название ближайшего к вам города - и я определю ваш часовой пояс.";
+    
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: 999999999,
+        caption,
+        keyboard: handleTimezonesDefaultKeyboard
+    })
+    
+    db.updateUser(userId, { state: { action: 'set_timezone', messageId } });
+}
+
+export async function handleSetTimezone(userId: number, text: string) {
+    const user = db.getUser(userId);
+    if (!user || !user.state) return;
+    
+    const city: CityData | undefined = findCity(text);
+    
+    if (city === undefined) {
+        botInstance.editMessageText("✅ <i>Сообщение устарело</i>", {
+            message_id: user.state.messageId,
+            chat_id: userId,
+        })
+        
+        const reply = await botInstance.sendMessage(userId, "⚙ <b>Город не найден</b>"
+        + "\nВозможно, вы допустили опечатку?", {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: handleTimezonesDefaultKeyboard }
+        });
+        
+        db.updateUser(userId, { state: { action: 'set_timezone', messageId: reply.message_id } });
+        return;
+    }
+    
+    await botInstance.sendMessage(userId, `✅ Часовой пояс установлен на <b>UTC+${city.utc}</b>`, { parse_mode: 'HTML' });
+    
+    db.updateUser(userId, { settings: { ...user.settings, city: city.name, utc: city.utc } });
+    
+    handlePersonalSettings(userId, userId, NaN); // TODO change first userId to chatId?
 }
 
 export async function handleRequestAccess(chatId: number, userId: number, username?: string) {
@@ -587,15 +682,16 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
             [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]
         ];
         
-        async function getMediaFunction(usage: DailyUsage[]) {
-            return await generateMonthlyUsageChart(usage);
+        async function getMediaFunction() {
+            if (config === undefined) return "empty.png";
+            return await generateMonthlyUsageChart(config.dailyUsage || []);
         }
         
         // TODO fix
         // @ts-ignore
         await botInstance.sendCachedMedia(chatId, messageId, {
             uniqueKey: 'config-' + config.wgEasyClientId,
-            media: (config: UserConfig) => getMediaFunction(config?.dailyUsage || []),
+            media: getMediaFunction,
             expiresIn: 60 * 1000,
             caption: text,
             keyboard: inline_keyboard,

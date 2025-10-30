@@ -219,11 +219,20 @@ export async function handleSubnetList(chatId: number, messageId: number, page: 
     ]);
     inline_keyboard.push([{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]);
     
-    await botInstance.editMessageCaption(messageText, {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: { inline_keyboard }
-    });
+    try {
+        await botInstance.editMessageCaption(messageText, {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: { inline_keyboard }
+        });
+    } catch (e) {
+        await botInstance.editMessageText(messageText + 
+        "\n\n⚠ Чтобы использовать кнопки, перейдите в главное меню, и затем обратно сюда! (временный баг)", {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: { inline_keyboard }
+        });
+    }
     
     logActivity(`Admin ${chatId} requested ip subnets list (page ${page})`);
 }

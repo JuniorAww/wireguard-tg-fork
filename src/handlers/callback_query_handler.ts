@@ -34,15 +34,20 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             return;
         }
         
-        if (data === 'personal_settings') {
-            await botInstance.answerCallbackQuery(query.id, { text: "В разработке." });
-            return;
-        }
-        
         // Пользовательский флоу (без доступа)
         if (user.hasAccess || user.configs.length) {
             if (data === 'user_main_menu') {
                 await userFlow.showMainMenu(chatId, userId, messageId);
+                await botInstance.answerCallbackQuery(query.id);
+                return;
+            }
+            if (data === 'personal_settings') {
+                await userFlow.handlePersonalSettings(chatId, userId, messageId);
+                await botInstance.answerCallbackQuery(query.id);
+                return;
+            }
+            if (data === 'set_timezone') {
+                await userFlow.handleSetTimezoneStart(chatId, userId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
