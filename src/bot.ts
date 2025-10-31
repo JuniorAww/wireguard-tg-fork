@@ -4,9 +4,10 @@ import path from 'path';
 import { AppConfig, Device, User } from '$/db/types';
 import * as userFlow from '$/handlers/user_flow';
 import * as adminFlow from '$/handlers/admin_flow';
+import settingsFlow, { initSettingsFlow } from '$/handlers/settings_flow';
 import { initUserFlow, handleStart } from '$/handlers/user_flow';
 import { initAdminFlow } from '$/handlers/admin_flow';
-import * as db from '$/db';
+import * as db from '$/db/index';
 import { initWgEasyApi } from '$/api/wg_easy_api';
 import { initCallbackQueryHandler, handleCallbackQuery } from '$/handlers/callback_query_handler';
 import { logActivity } from '$/utils/logger';
@@ -68,10 +69,11 @@ bot.sendCachedMedia = sendCachedMedia;
 
 initUserFlow(bot, devices, appConfig);
 initAdminFlow(bot, appConfig);
+initSettingsFlow(bot);
 initCallbackQueryHandler(bot, appConfig);
 
 logActivity("Bot started successfully. Polling for updates...");
-console.log("Telegram Bot успешно запущен и готов к работе!");
+//console.log("Telegram Bot успешно запущен и готов к работе!");
 console.log(`Admin IDs: ${appConfig.adminTelegramIds.join(', ')}`);
 console.log(`wg-easy API URL: ${appConfig.wgEasyApiUrl}`);
 
@@ -93,85 +95,13 @@ bot.onText(/❓ Плохо работает VPN/, async (msg) => {
     }
 });
 
-// TODO убрать
-bot.onText(/🛡 Wireguard/, async (msg) => {
-    const user = db.getUser(msg.from!.id);
-    if (user && user.hasAccess) {
-        logActivity(`User ${msg.from!.id} selected '🛡 Wireguard'`);
-        await userFlow.handleCreateWgConfigStart(msg.chat.id, msg.from!.id, NaN);
-    }
-});
-
-// TODO убрать
-bot.onText(/📄 Мои конфиги/, async (msg) => {
-    const user = db.getUser(msg.from!.id);
-    if (user && user.hasAccess) {
-        logActivity(`User ${msg.from!.id} selected '📄 Мои конфиги'`);
-        await userFlow.handleListMyConfigs(msg.chat.id, msg.from!.id, NaN, 0);
-    }
-});
-
-// TODO убрать
-/*bot.onText(/👑 Админ-панель/, async (msg) => {
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        logActivity(`Admin ${msg.from!.id} selected '👑 Админ-панель'`);
-        await adminFlow.showAdminMainMenu(msg.chat.id);
-    }
-});*/
-
-/* ==============
- Команды админа
-============== */
-
-/* TODO убрать
-bot.onText(/👥 Пользователи/, async (msg) => {
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        logActivity(`Admin ${msg.from!.id} selected '👥 Пользователи'`);
-        await adminFlow.handleAdminListUsers(msg.chat.id, null, 0);
-    }
-});*/
-
-/* TODO убрать
-bot.onText(/⚙️ Все конфиги/, async (msg) => {
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        logActivity(`Admin ${msg.from!.id} selected '⚙️ Все конфиги'`);
-        await adminFlow.handleAdminListAllConfigs(msg.chat.id, null, 0);
-    }
-});*/
-
-/* TODO убрать
-bot.onText(/📊 Статистика/, async (msg) => {
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        logActivity(`Admin ${msg.from!.id} selected '📊 Статистика'`);
-        await adminFlow.handleAdminShowUsageStats(msg.chat.id);
-    }
-});*/
-
-/* TODO убрать
-bot.onText(/📝 Просмотр логов/, async (msg) => {
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        logActivity(`Admin ${msg.from!.id} selected '📝 Просмотр логов'`);
-        await adminFlow.handleAdminViewLogs(msg.chat.id);
-    }
-});*/
-
 bot.onText(/⚡ Открыть главное меню/, async (msg) => {
     const user = db.getUser(msg.from!.id);
-    if (user && user.hasAccess) {
+    if (user && (user.hasAccess || user.configs.length)) {
         logActivity(`User ${msg.from!.id} selected '⬅️ Главное меню'`);
         await userFlow.showMainMenu(msg.chat.id, msg.from!.id);
     }
 });
-
-
-/*bot.onText(/\/admin/, async (msg) => {
-    logActivity(`Received /admin command from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
-    if (msg.from?.id === appConfig.adminTelegramId) {
-        await adminFlow.handleAdminCommand(msg);
-    } else {
-        await bot.sendMessage(msg.chat.id, "У вас нет прав для этой команды.");
-    }
-});*/
 
 bot.onText(/\/cancel/, async (msg) => {
     const userId = msg.from!.id;
@@ -192,7 +122,6 @@ bot.onText(/\/cancel/, async (msg) => {
 
 /* ==============================
  Обработчик текстовых сообщений 
-       (для ввода имени конфига)
 ============================== */
 
 bot.on('message', async (msg) => {
@@ -224,7 +153,7 @@ bot.on('message', async (msg) => {
     } 
     else if (user && user.state && user.state.action === 'set_timezone' && msg.text) {
         logActivity(`Received text message from ${userId} for setting timezone: "${msg.text}"`);
-        await userFlow.handleSetTimezone(userId, msg.text);
+        await settingsFlow.handleSetTimezone(userId, msg.text);
     } 
     else if (user && user.state && user.state.action === 'admin_subnet_creation' && msg.text) {
         logActivity(`Received text message from ${userId} for subnet creation: "${msg.text}"`);

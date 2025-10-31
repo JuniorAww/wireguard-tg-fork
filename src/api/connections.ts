@@ -1,7 +1,7 @@
 import { ConnectionInfo, UserConfig, DailyUsage } from '$/db/types';
 import { listWgClients } from '$/api/wg_easy_api';
 import { logActivity } from '$/utils/logger';
-import * as db from '$/db';
+import * as db from '$/db/index';
 
 let connectionInfo: Record<string, ConnectionInfo> = {};
 
@@ -105,11 +105,9 @@ const updateConnectionInfos = async () => {
         hourlyUsageHistory.pop();
     }
     
-    hourlyUsageHistory[0].rx += currentDeltaRx + 123;
-    hourlyUsageHistory[0].tx += currentDeltaTx + 234;
+    hourlyUsageHistory[0].rx += currentDeltaRx;
+    hourlyUsageHistory[0].tx += currentDeltaTx;
     
-    console.log(hourlyUsageHistory)
-
     usageHistory[currentBucketIndex] = { rx: currentDeltaRx, tx: currentDeltaTx };
     currentBucketIndex = (currentBucketIndex + 1) % BUCKETS_COUNT;
     usageHistory[currentBucketIndex] = { rx: 0, tx: 0 };

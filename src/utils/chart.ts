@@ -36,15 +36,16 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[], sett
     });
     
     const largest = Math.max(
-		hourlyUsageHistory.sort((a,b) => b.tx - a.tx)?.[0]?.tx || 0,
-        hourlyUsageHistory.sort((a,b) => b.tx - a.tx)?.[0]?.rx || 0
+		...hourlyUsageHistory.map(a => a.tx),
+		...hourlyUsageHistory.map(a => a.rx),
     )
     
-    const [ _, size ] = getUsageText(largest).split(' ');
-    
+    const [ x, size ] = getUsageText(largest).split(' ');
+    console.log(x)
     hourlyUsageHistory.sort((a,b) => a.hour - b.hour);
     const txData = hourlyUsageHistory.map(h => getUsage(h.tx, size));
     const rxData = hourlyUsageHistory.map(h => getUsage(h.rx, size));
+	const suggestedMax = +(+x + +x / 10).toFixed(1); // UPD: поднять верхнюю границу на 10%
     
     const chartConfig = {
         type: 'bar',
@@ -77,7 +78,10 @@ export async function generateUsageChart(hourlyUsageHistory: HourlyUsage[], sett
 				...basicTicks
 			  },
 			  y: {
-				...basicTicks
+				ticks: {
+					suggestedMax,
+					font: { family: 'Inter Regular', size: 12 }, color: '#888'
+				}
 			  }
 			},
 			plugins: {
@@ -103,7 +107,7 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
 		dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.tx || 0,
         dailyUsage.sort((a,b) => b.tx - a.tx)?.[0]?.rx || 0
     )
-    console.log(dailyUsage)
+    
     const [ _, size ] = getUsageText(largest).split(' ');
     
     for (let i = 29; i >= 0; i--) {

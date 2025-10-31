@@ -1,15 +1,14 @@
 import TelegramBot, { InlineKeyboardButton } from 'node-telegram-bot-api';
 import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage, hourlyUsageHistory, getMonthlyUsage } from '$/api/connections';
 import { handleAdminViewConfig, handleAdminListAllConfigs } from '$/handlers/admin_flow'
-import { User, Device, UserConfig, DailyUsage, AppConfig, CallbackButton, Subnet } from '$/db/types';
+import { User, Device, UserConfig, DailyUsage, AppConfig, Subnet } from '$/db/types';
 import { getUsageText, escapeConfigName } from '$/utils/text'
 import { generateUsageChart, generateMonthlyUsageChart } from '$/utils/chart';
 import { logActivity } from '$/utils/logger';
 import * as wgAPI from '$/api/wg_easy_api';
 import { isMediaCached } from '$/utils/images';
 import { getAllowedIPs, sourceEval } from '$/utils/ips';
-import { findCity, CityData } from '$/utils/timezone';
-import * as db from '$/db';
+import * as db from '$/db/index';
 import path from 'path';
 import fs from 'node:fs';
 
@@ -59,9 +58,9 @@ export async function handleStart(msg: TelegramBot.Message) {
     }
 }
 
-function getMainKeyboard(canCreateConfigs: boolean, isAdmin: boolean): CallbackButton[][] {
+function getMainKeyboard(canCreateConfigs: boolean, isAdmin: boolean): InlineKeyboardButton[][] {
     const merge = canCreateConfigs || isAdmin;
-    const keyboard: CallbackButton[][] = [];
+    const keyboard: InlineKeyboardButton[][] = [];
 
     if (merge) {
         keyboard.push([
@@ -84,7 +83,6 @@ function getMainKeyboard(canCreateConfigs: boolean, isAdmin: boolean): CallbackB
 export async function showMainMenu(chatId: number, userId: number, messageId?: number) {
     const user = db.getUser(userId);
     if (!user) {
-        console.log('No user');
         await botInstance.sendMessage(chatId, "Ошибка отправки меню.")
         return;
     }
@@ -97,7 +95,7 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
         [{ text: "❓ Плохо работает VPN" }],
     ];
     
-    const inline_keyboard: CallbackButton[][] = getMainKeyboard(user.hasAccess, isAdmin);
+    const inline_keyboard: InlineKeyboardButton[][] = getMainKeyboard(user.hasAccess, isAdmin);
     
     const hourlyStats = `📊 <b>Статистика за час</b>`
                       + `\nСкачано ${getUsageText(lastHourUsage.tx)}, загружено ${getUsageText(lastHourUsage.rx)}`;
@@ -108,7 +106,7 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
     
     let placeholderMessage;
     
-    if (!mediaCached) {
+    if (!messageId) {
         placeholderMessage = await botInstance.sendMessage(chatId, "🔄 Загрузка статистики...", { 
             reply_markup: { keyboard: bottomKeyboard, resize_keyboard: true, one_time_keyboard: false },
         });
@@ -118,8 +116,6 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
         async function getMediaFunction() {
             if (user === undefined) return "empty.png";
             const currentHour = new Date().getUTCHours() + user.settings.utc;
-            
-            console.log(currentHour)
             
             const hourlyUsageWithHours = hourlyUsageHistory
                 .slice(0, user.settings.chart?.fullDay ? 24 : (currentHour % 24 + 1))
@@ -138,111 +134,14 @@ export async function showMainMenu(chatId: number, userId: number, messageId?: n
             caption,
             keyboard: inline_keyboard,
         })
-        
-        if (messageId && placeholderMessage)
-			await botInstance.deleteMessage(chatId, placeholderMessage.message_id);
     } catch (error) {
         console.error("Failed to generate or send usage chart:", error);
         logActivity(`Failed to generate or send usage chart for user ${userId}: ${error}`);
-        try {
-            if (!placeholderMessage)
-                await botInstance.sendMessage(chatId, `${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
-                    parse_mode: 'HTML',
-                    reply_markup: { inline_keyboard, resize_keyboard: true, one_time_keyboard: false },
-                });
-            else
-                await botInstance.editMessageText(`${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
-                    chat_id: chatId,
-                    message_id: placeholderMessage.message_id,
-                    parse_mode: 'HTML',
-                });
-        } catch (editError) {
-            console.error("Failed to edit caption on error, sending new message:", editError);
-            await botInstance.sendMessage(chatId, `${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard, resize_keyboard: true, one_time_keyboard: false },
-            });
-        }
+		await botInstance.sendMessage(chatId, `${caption}\n\n⚠️ Не удалось загрузить график статистики.`, {
+			parse_mode: 'HTML',
+			reply_markup: { inline_keyboard, resize_keyboard: true, one_time_keyboard: false },
+		});
     }
-}
-
-export async function handlePersonalSettings(chatId: number, userId: number, messageId: number) {
-    const user = db.getUser(userId);
-    if (!user) return;
-    
-    db.updateUser(userId, { state: undefined });
-    
-    const inline_keyboard = [
-        [{ text: "🌆 Часовой пояс: UTC+" + user.settings.utc, callback_data: `set_timezone` }],
-        [{ text: "⬅️ В главное меню", callback_data: `user_main_menu` }],
-    ]
-    
-    const caption = "⚙ <b>Персональные настройки</b>"
-    + "\nЗдесь можно настроить графики — например, используемый часовой пояс.";
-    
-    // TODO fix
-    // @ts-ignore
-    await botInstance.sendCachedMedia(chatId, messageId, {
-        media: "empty.png",
-        uniqueKey: 'empty',
-        expiresIn: 999999999,
-        caption,
-        keyboard: inline_keyboard
-    })
-}
-
-const handleTimezonesDefaultKeyboard: CallbackButton[][] = [
-    [
-        { text: "⬅️ Отменить и к настройкам", callback_data: `personal_settings` },
-    ]
-]
-
-export async function handleSetTimezoneStart(chatId: number, userId: number, messageId: number) {
-    const user = db.getUser(userId);
-    if (!user) return;
-    
-    const caption = "⚙ <b>Часовой пояс</b>"
-    + "\nНапишите название ближайшего к вам города - и я определю ваш часовой пояс.";
-    
-    // @ts-ignore
-    await botInstance.sendCachedMedia(chatId, messageId, {
-        media: "empty.png",
-        uniqueKey: 'empty',
-        expiresIn: 999999999,
-        caption,
-        keyboard: handleTimezonesDefaultKeyboard
-    })
-    
-    db.updateUser(userId, { state: { action: 'set_timezone', messageId } });
-}
-
-export async function handleSetTimezone(userId: number, text: string) {
-    const user = db.getUser(userId);
-    if (!user || !user.state) return;
-    
-    const city: CityData | undefined = findCity(text);
-    
-    if (city === undefined) {
-        botInstance.editMessageText("✅ <i>Сообщение устарело</i>", {
-            message_id: user.state.messageId,
-            chat_id: userId,
-        })
-        
-        const reply = await botInstance.sendMessage(userId, "⚙ <b>Город не найден</b>"
-        + "\nВозможно, вы допустили опечатку?", {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: handleTimezonesDefaultKeyboard }
-        });
-        
-        db.updateUser(userId, { state: { action: 'set_timezone', messageId: reply.message_id } });
-        return;
-    }
-    
-    await botInstance.sendMessage(userId, `✅ Часовой пояс установлен на <b>UTC+${city.utc}</b>`, { parse_mode: 'HTML' });
-    
-    db.updateUser(userId, { settings: { ...user.settings, city: city.name, utc: city.utc } });
-    
-    handlePersonalSettings(userId, userId, NaN); // TODO change first userId to chatId?
 }
 
 export async function handleRequestAccess(chatId: number, userId: number, username?: string) {
@@ -284,17 +183,19 @@ export async function handleCreateWgConfigStart(chatId: number, userId: number, 
         return;
     }
 
-    const deviceButtons = devices.map(device => ([{ text: device.name, callback_data: `select_device_${device.id}` }]));
-
-    deviceButtons.push([{ text: "⬅️ Отмена и назад в меню", callback_data: "user_main_menu" }]);
+    const inline_keyboard = [
+		...devices.map(device => ([{ text: device.name, callback_data: `select_device_${device.id}` }])),
+		[{ text: "⬅️ Отмена и назад в меню", callback_data: "user_main_menu" }]
+	];
     
-    botInstance.deleteMessage(chatId, messageId);
-    
-    await botInstance.sendMessage(chatId, "Выберите тип устройства для конфигурации:", {
-        reply_markup: {
-            inline_keyboard: deviceButtons,
-        }
-    });
+    // @ts-ignore
+	await botInstance.sendCachedMedia(chatId, messageId, {
+		media: "empty.png",
+		uniqueKey: 'empty',
+		expiresIn: 999999999,
+		caption: "Выберите тип устройства для конфигурации:",
+		keyboard: inline_keyboard
+	})
 }
 
 export async function handleDeviceSelection(chatId: number, userId: number, messageId: number, deviceId: string) {
@@ -304,8 +205,8 @@ export async function handleDeviceSelection(chatId: number, userId: number, mess
         return;
     }
     
-    const reply = await botInstance.editMessageText(
-            `Вы выбрали: <b>${device.name}</b>.\nТеперь введите имя для этой конфигурации (например, "Мой ноутбук" или "Телефон Мамы").\n\nДля отмены нажмите кнопку ниже или введите /cancel.`,
+    const reply = await botInstance.editMessageCaption(
+            `Вы выбрали: <b>${device.name}</b>.\nТеперь введите имя для этой конфигурации (например, "Мой ноутбук" или "Телефон Мамы").\n\nДля отмены нажмите кнопку ниже или введите /start.`,
             {
                 parse_mode: 'HTML',
                 chat_id: chatId, message_id: messageId,
@@ -315,7 +216,7 @@ export async function handleDeviceSelection(chatId: number, userId: number, mess
     });
     
     // @ts-ignore
-    db.updateUser(userId, { state: { action: 'awaiting_config_name', data: { deviceId }, messageId: reply.message_id } });
+    db.updateUser(userId, { state: { action: 'awaiting_config_name', data: { deviceId: device.id }, messageId: reply.message_id } });
 }
 
 export async function handleConfigNameInput(msg: TelegramBot.Message) {
@@ -331,8 +232,7 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
         await botInstance.sendMessage(chatId, "Имя конфигурации слишком длинное (максимум 50 символов). Пожалуйста, введите более короткое имя.");
         return;
     }
-
-
+    
     const user = db.getUser(userId);
     if (!user || !user.state || user.state.action !== 'awaiting_config_name' || !user.state.data || !user.state.data.deviceId) {
         await botInstance.sendMessage(chatId, "Произошла ошибка или вы не завершили предыдущее действие. Пожалуйста, начните заново с /start.");
@@ -341,20 +241,19 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
     }
     
     const deviceToShow = devices.find(d => d.id === user.state?.data?.deviceId);
+    
     if (deviceToShow) {
-        botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}\n<b>Имя конфига:</b> ${configName}`, {
-            reply_markup: {
-                inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
-            },
-            parse_mode: 'HTML',
-            chat_id: chatId,
-            message_id: user.state?.messageId, 
-        })
+        try {
+            await botInstance.editMessageReplyMarkup(chatId, user.state?.messageId, 
+                               [[{ text: "✅ Завершено", callback_data: "noop" }]])
+        } catch (e) {
+            console.log("Ошибка необязательного редактирования (user_flow.ts->handleConfigNameInput)")
+        }
     }
     
     const reply = await botInstance.sendMessage(chatId, 
-      "Теперь вы можете выбрать владельца конфига (если конфиг предназначен другому человеку)"
-    + "\nЧтобы указать - перешлите любое сообщение от владельца в этот диалог (аккаунт не должен быть приватным!)", {
+      "Теперь вы можете выбрать <b>владельца конфига</b> (если конфиг предназначен другому человеку)"
+    + "\nДля этого перешлите любое сообщение от владельца в этот диалог (аккаунт не должен быть приватным!)", {
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [
@@ -459,8 +358,6 @@ async function createConfig(user: User, userId: number, chatId: number, configNa
         if (typeof configFileContent === 'string' && configFileContent.length > 0) {
             await botInstance.sendDocument(chatId, Buffer.from(configFileContent), {
                 caption: `📦 Файл конфигурации для "${configName}"`,
-                // @ts-ignore
-                contentType: 'text/plain',
             }, {
                 filename: `${escapeConfigName(configName)}.conf`,
                 contentType: 'text/plain',
@@ -469,7 +366,7 @@ async function createConfig(user: User, userId: number, chatId: number, configNa
             logActivity(`Failed to get config file content for ${newClient.id} in handleConfigNameInput. Content: ${configFileContent}`);
             await botInstance.sendMessage(chatId, "📦 Не удалось получить файл конфигурации.");
         }
-
+        
         // Отправка QR-кода
         const qrCodeBuffer = await wgAPI.getClientQrCodeSvg(newClient.id);
         if (qrCodeBuffer instanceof Buffer && qrCodeBuffer.length > 0) {
@@ -499,7 +396,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
         return;
     }
     
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+    const inline_keyboard: InlineKeyboardButton[][] = [
 		[{ text: "⬅️ Назад в меню", callback_data: "user_main_menu" }]
     ];
     
@@ -507,11 +404,6 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     
     const configs = user.configs;
     if (configs.length === 0) {
-        /*await botInstance.sendMessage(chatId, "У вас пока нет созданных конфигураций.", {
-            reply_markup: {
-                inline_keyboard
-            }
-        });*/
         // @ts-ignore
         await botInstance.sendCachedMedia(chatId, messageId, {
             media: "config_list.png",
@@ -540,7 +432,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     
     let itemsInCurrentRow = 0;
     let currentRowSymbolsLength = 0;
-    let currentRow: CallbackButton[] = [];
+    let currentRow: InlineKeyboardButton[] = [];
     let insertedButtons = [];
     
     pageConfigs.forEach((config, index) => {
@@ -586,10 +478,11 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     const [ totalRx, totalTx ] = getTotalBandwidthUsage(configs)
     caption += `\n📊 Всего скачано ${getUsageText(totalTx)}, отправлено ${getUsageText(totalRx)}`
     
-    const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
+    const paginationButtons: InlineKeyboardButton[] = [];
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `list_my_configs_page_${currentPage - 1}` });
     }
+	
     paginationButtons.push({ text: `${currentPage + 1} / ${totalPages}`, callback_data: "noop" }); // noop - ничего не делать
     if (currentPage < totalPages - 1) {
         paginationButtons.push({ text: "➡️", callback_data: `list_my_configs_page_${currentPage + 1}` });
@@ -598,8 +491,6 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     if (paginationButtons.length > 0) {
         insert(paginationButtons);
     }
-    
-    let sentMessage;
     
     try {
         // TODO fix
@@ -632,10 +523,6 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
         return;
     }
 
-    let placeholderMessage = 
-        isMediaCached('config-' + wgEasyClientId) ? undefined :
-        await botInstance.sendMessage(chatId, `🔄 Загрузка деталей для "${config.userGivenName}"...`);
-
     try {
         const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
         const creationDate = new Date(config.createdAt).toLocaleString('ru-RU');
@@ -662,14 +549,11 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
         text += `<b>Трафик:</b> ${bandwidth}\n`
         text += `<b>ID (wg-easy):</b> ${config.wgEasyClientId}`;
 
-        const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+        const inline_keyboard: InlineKeyboardButton[][] = [
             [
-                { text: "📥 Скачать (.conf)", callback_data: `config_file_${wgEasyClientId}` },
+                { text: "📥 Скачать (.conf)", callback_data: `config_file_${wgEasyClientId} open 0` },
                 { text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
             ],
-            /*[
-                { text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
-            ],*/
             [
                 config.isEnabled
                     ? { text: "🚫 Отключить", callback_data: `disable_config_${wgEasyClientId}` }
@@ -696,9 +580,6 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
             caption: text,
             keyboard: inline_keyboard,
         })
-        
-        if (placeholderMessage)
-            await botInstance.deleteMessage(chatId, placeholderMessage.message_id);
     } catch (error) {
         console.error(`Failed to show config details with chart for ${wgEasyClientId}:`, error);
         logActivity(`Failed to show config details with chart for ${wgEasyClientId}: ${error}`);
@@ -709,25 +590,18 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
     }
 }
 
-export async function handleConfigFile(chatId: number, userId: number, messageId: number, wgEasyClientId: string, action: string) {
+export async function handleConfigFile(chatId: number, userId: number, messageId: number, wgEasyClientId: string, action: string, currentPage: number) {
     const user = db.getUser(userId);
     if (!user) return;
     
-    console.log(wgEasyClientId)
-
     const configIndex = user.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-    console.log('wg easy id ',wgEasyClientId)
+    
     if (configIndex === -1) {
         await botInstance.sendMessage(chatId, "❓ Конфигурация не найдена.");
         return;
     }
     
     const config = user.configs[configIndex];
-    
-    if (!user.subnets) {
-        user.subnets = {};
-        db.updateUser(userId, { subnets: {} });
-    }
     
     const allSubnets: Record<string, Subnet> = db.getSubnets();
     const allExistingKeys = Object.keys(allSubnets);
@@ -737,52 +611,55 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
     // TODO do updateUser
     
     async function show(user: User) {
-        let caption = `📥 <b>Настройка .conf</b>`
+        let caption = `📥 <b>Получение конфига</b>`
                    + `\nВы можете настроить разрешения (AllowedIPs), чтобы конфиг работал только на определенных сервисах`
-                   + `\n<b>Внимание:</b> разрешения плохо работают на Linux!`;
+                   + `\n<b>Внимание:</b> разрешения плохо работают на Linux!`
+                   + `\n<b>Рекомендация:</b> правильнее всего настроить либо только минусы, либо только плюсы`
+                   + `\n\n<b>Обозначения</b>\n✖ - список неактивен\n➕ - трафик будет идти через VPN`
+                   + `\n➖ - трафик будет идти в обход (без скрытия IP)`;
         
-        const buttons = [];
+        const inline_keyboard: InlineKeyboardButton[][] = [];
+        const subButtons: InlineKeyboardButton[] = [];
         
-        const subButtons: CallbackButton[] = [];
-        
-        Object.entries(allSubnets)
-          .filter(([ subnetId ]) => user.subnets[subnetId] === undefined)
-          .forEach(([ subnetId, subnet ]) => {
-              subButtons.unshift({ text: `✖ ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` });
-          });
-        
-        /*let allowedAmount = 0;
-        let blockedAmount = 0;*/
-        
-        Object.entries(user.subnets).forEach(([ subnetId, enabled ]) => {
-            const emoji = enabled ? '➕' : '➖';
-            /*if (enabled) allowedAmount += allSubnets[subnetId].ips?.length;
-            else         blockedAmount += allSubnets[subnetId].ips?.length;*/
-            subButtons.unshift({ text: `${emoji} ${allSubnets[subnetId]?.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId}` })
-        });
-        
-        /*caption += `\n<b>Разрешенных IP:</b> ${allowedAmount === 0 ? 'все' : allowedAmount}`
-        caption += `\n<b>Исключенных IP:</b> ${(allowedAmount > 0 && blockedAmount === 0) ? 'все' : blockedAmount}`*/
+		const subnetEntries = Object.entries(allSubnets);
+		//const subnetKeys = Object.keys TODO optimize (don't use Object.entries)
+		
+        subnetEntries.slice(currentPage * 6, currentPage * 6 + 6)
+			.forEach(([ subnetId, subnet ]) => {
+				const status = user.subnets[subnetId]; // undefined, true, false
+				const emoji = status === undefined ? '✖' : status ? '➕' : '➖';
+				
+				subButtons.unshift({ text: `${emoji} ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId} ${currentPage}` });
+			});
         
         for (let i = 0; i < subButtons.length; i += 2) {
-            buttons.push([ subButtons[i] ])
-            if (subButtons[i + 1]) {
-                buttons[Math.floor(i / 2)].push(subButtons[i + 1])
-            }
+            inline_keyboard.push([ subButtons[i] ])
+            if (subButtons[i + 1])
+                inline_keyboard[Math.floor(i / 2)].push(subButtons[i + 1]);
         }
+		
+		const totalPages = Math.ceil(subnetEntries.length / 6);
         
-        buttons.push([{ text: "✅ Получить конфиг", callback_data: `config_file_${wgEasyClientId} get` }]);
-        
-        const reply_markup = {
-            inline_keyboard: buttons
-        }
-        
-        await botInstance.editMessageCaption(caption, {
-            parse_mode: 'HTML',
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup,
-        });
+		const paginationButtons: InlineKeyboardButton[] = [];
+        if (currentPage > 0)
+			paginationButtons.push({ text: "⬅️", callback_data: `config_file_${wgEasyClientId} open ${currentPage - 1}` });
+		if (totalPages > 1)
+			paginationButtons.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: `noop ${Math.random()}` }); // UPD: изредка бывают ошибки "markup wasn't changed", здесь фикс
+		if (currentPage < totalPages - 1)
+			paginationButtons.push({ text: "➡️", callback_data: `config_file_${currentPage + 1} open ${currentPage + 1}` });
+		
+        inline_keyboard.push(paginationButtons);
+        inline_keyboard.push([{ text: "✅ Получить конфиг", callback_data: `config_file_${wgEasyClientId} get` }]);
+        inline_keyboard.push([{ text: "⬅️ Вернуться", callback_data: `view_config_${wgEasyClientId}` }]);
+		
+        // @ts-ignore
+		await botInstance.sendCachedMedia(chatId, messageId, {
+            uniqueKey: 'empty',
+            media: 'empty.png',
+            expiresIn: Math.pow(2, 32),
+            caption,
+            keyboard: inline_keyboard,
+        })
     }
     
     try {
@@ -790,6 +667,8 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
             let fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
             if (typeof fileContent === 'string' && fileContent.length > 0) {
                 const subnetKeys = Object.keys(user.subnets);
+                
+                let prefix = "";
                 
                 if (subnetKeys.length !== 0) {
                     const subnets: [string, boolean][] = Object.entries(user.subnets);
@@ -813,22 +692,27 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
                     
                     if (!allowed.length) allowed = [ "0.0.0.0/0" ];
                     
-                    console.log('allowed/blocked size', allowed.length, blocked.length);
-                    const sum = getAllowedIPs(allowed, blocked);
-                    console.log('sum size', sum.length);
+                    const allowedIPs = getAllowedIPs(allowed, blocked).join(','); // вычисление
                     
                     const lines = fileContent.split('\n');
-                    console.log(lines);
+                    
                     const aiLine = lines.findIndex(l => l.startsWith('AllowedIPs'));
                     if (aiLine === -1) throw new Error("No AllowedIPs line found");
                     
-                    lines[aiLine] = 'AllowedIPs = ' + sum.join(',');
+                    lines[aiLine] = 'AllowedIPs = ' + allowedIPs;
                     fileContent = lines.join('\n');
+                    
+                    try {
+                        prefix = '-' + new Bun.CryptoHasher("sha1")
+                                              .update(allowedIPs).digest('hex').slice(0, 4);
+                    } catch (e) {
+                        console.log('Prefix error!')
+                    }
                 }
                 
                 await handleViewConfig(chatId, userId, messageId, wgEasyClientId);
                 await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
-                    filename: `${escapeConfigName(config.userGivenName)}.conf`,
+                    filename: `${escapeConfigName(config.userGivenName)}${prefix}.conf`,
                     contentType: 'text/plain'
                 });
                 logActivity(`User ${userId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);
@@ -850,7 +734,7 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
             
             await show(user);
         }
-        else {
+        else if (action === 'open') {
             await show(user);
         }
     } catch (e) {
@@ -933,7 +817,7 @@ export async function handleConfigAction(chatId: number, userId: number, message
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" удалена.` }); // callback_query_handler
                     await botInstance.sendMessage(chatId, `➖ Конфигурация "${config.userGivenName}" удалена.`); // TODO: edit message instead of sending new one
                     logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${userId}`);
-                    if (isAdminAction) await handleAdminListAllConfigs(chatId, 0);
+                    if (isAdminAction) await handleAdminListAllConfigs(chatId, 0, messageId);
                     else await handleListMyConfigs(chatId, userId, messageId, 0);
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось удалить конфигурацию.");

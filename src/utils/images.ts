@@ -14,10 +14,12 @@ export function isMediaCached(uniqueKey: string) {
 	return cache !== undefined && cache.expiresAt > Date.now();
 }
 
-export async function sendCachedMedia(this: TelegramBot, 
-									  chatId: number,
-									  messageId: number,
-									  params: any) {
+export async function sendCachedMedia(
+	this: TelegramBot, 
+	chatId: number,
+	messageId: number,
+	params: any
+) {
 	const {
 		uniqueKey,
 		media,
@@ -59,7 +61,7 @@ export async function sendCachedMedia(this: TelegramBot,
 		let intermediaryFile: string | undefined;
 		
 		if (typeof media === 'function') {
-			image = await media(); // buffer
+			image = await media(); // (1) buffer
 		}
 		else if (!isNaN(parseInt(media, 10)))
 			image = media; // photoId
@@ -76,7 +78,7 @@ export async function sendCachedMedia(this: TelegramBot,
 			if (typeof media === 'function') {
 				const filename = (Math.random() + '.png').slice(2);
 				intermediaryFile = path.join(process.cwd(), 'images', filename);
-				fs.writeFileSync(intermediaryFile, image); // мы уже выполнили функцию media() ранее
+				fs.writeFileSync(intermediaryFile, image); // см. строку 64 (1)
 				image = 'attach://' + intermediaryFile;
 			}
 			
