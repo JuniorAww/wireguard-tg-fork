@@ -2,8 +2,9 @@ import TelegramBot from 'node-telegram-bot-api';
 import { AppConfig } from '$/db/types';
 import * as userFlow from '$/handlers/user_flow';
 import * as adminFlow from '$/handlers/admin_flow';
+import settingsFlow from '$/handlers/settings_flow';
 import { logActivity } from '$/utils/logger';
-import * as db from '$/db';
+import * as db from '$/db/index';
 
 
 let botInstance: TelegramBot;
@@ -42,12 +43,12 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 return;
             }
             if (data === 'personal_settings') {
-                await userFlow.handlePersonalSettings(chatId, userId, messageId);
+                await settingsFlow.handlePersonalSettings(chatId, userId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
             if (data === 'set_timezone') {
-                await userFlow.handleSetTimezoneStart(chatId, userId, messageId);
+                await settingsFlow.handleSetTimezoneStart(chatId, userId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -64,8 +65,8 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 return;
             }
             if (data.startsWith('config_file_')) {
-                const [ wgEasyClientId, action ] = data.substring('config_file_'.length).split(' ');
-                await userFlow.handleConfigFile(chatId, userId, messageId, wgEasyClientId, action);
+                const [ wgEasyClientId, action, page ] = data.substring('config_file_'.length).split(' ');
+                await userFlow.handleConfigFile(chatId, userId, messageId, wgEasyClientId, action, parseInt(page, 10));
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -130,13 +131,13 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             }
             if (data.startsWith('admin_list_users_page_')) {
                 const page = parseInt(data.substring('admin_list_users_page_'.length));
-                await adminFlow.handleAdminListUsers(chatId, page);
+                await adminFlow.handleAdminListUsers(chatId, page, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
             if (data.startsWith('admin_view_user_')) {
                 const userIdToView = parseInt(data.substring('admin_view_user_'.length));
-                await adminFlow.handleAdminViewUser(chatId, userIdToView);
+                await adminFlow.handleAdminViewUser(chatId, userIdToView, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -154,12 +155,12 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             }
             if (data.startsWith('admin_list_all_configs_page_')) {
                 const page = parseInt(data.substring('admin_list_all_configs_page_'.length));
-                await adminFlow.handleAdminListAllConfigs(chatId, page);
+                await adminFlow.handleAdminListAllConfigs(chatId, page, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
             if (data.startsWith('admin_show_stats')) {
-                await adminFlow.handleAdminShowUsageStats(chatId);
+                await adminFlow.handleAdminShowUsageStats(chatId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -196,9 +197,9 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                     const globalIndex = parseInt(adminConfigActionMatch[4]);
                     const allConfigs = db.getAllConfigs();
                     const targetConfig = allConfigs[globalIndex];
-                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${targetConfig.ownerId}_${targetConfig.wgEasyClientId}`);
+                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${targetConfig.ownerId}_${targetConfig.wgEasyClientId}`, messageId);
                 } else { // ownerId_wgClientId
-                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`);
+                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`, messageId);
                 }
                 if (!actionWithPrefix.endsWith('_ask')) {
                     try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
@@ -206,7 +207,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 return;
             }
             if (data === 'admin_view_logs') {
-                await adminFlow.handleAdminViewLogs(chatId);
+                await adminFlow.handleAdminViewLogs(chatId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -235,7 +236,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         }
 
 
-        if (data === 'noop') { // Кнопка-пустышка
+        if (data.startsWith('noop')) { // Кнопка-пустышка
             await botInstance.answerCallbackQuery(query.id);
             return;
         }

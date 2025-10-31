@@ -1,14 +1,15 @@
-import TelegramBot, { Message } from 'node-telegram-bot-api';
-import { User, AppConfig, UserConfig, Subnet, CallbackButton } from '$/db/types';
+import TelegramBot, { Message, InlineKeyboardButton } from 'node-telegram-bot-api';
+import { User, AppConfig, UserConfig, Subnet } from '$/db/types';
 import { logActivity } from '$/utils/logger';
 import { generateMonthlyUsageChart, generateTopUsersChart } from '$/utils/chart';
 import { getUsageText } from '$/utils/text';
 import { sourceEval } from '$/utils/ips';
 import { devices } from '$/bot';
-import * as db from '$/db';
+import * as db from '$/db/index';
 
 import * as userFlow from '$/handlers/user_flow';
 import * as wgAPI from '$/api/wg_easy_api';
+
 
 let botInstance: TelegramBot;
 let appConfigInstance: AppConfig;
@@ -19,7 +20,7 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
 }
 
 export async function showAdminMainMenu(chatId: number, messageId: number) {
-    const inline_keyboard: CallbackButton[][] = [
+    const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "👥 Пользователи", callback_data: "admin_list_users_page_0" },
         { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
         [{ text: "📝 Просмотр логов", callback_data: "admin_view_logs" },
@@ -27,23 +28,15 @@ export async function showAdminMainMenu(chatId: number, messageId: number) {
         [{ text: "📌 Списки IP", callback_data: "admin_subnets_0" }],
         [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }],
     ];
-    try {
-        await botInstance.editMessageCaption("👑 <b>Меню администратора</b>", {
-            chat_id: chatId, message_id: messageId,
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard
-            }
-        });
-    } catch (e) {
-        await botInstance.editMessageText("👑 <b>Меню администратора</b>\nОтсюда вы можете управлять ботом!", {
-            chat_id: chatId, message_id: messageId,
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard
-            }
-        });
-    }
+    
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: Math.pow(2, 32),
+        caption: "👑 <b>Меню администратора</b>\nОтсюда вы можете управлять ботом!",
+        keyboard: inline_keyboard
+    });
 }
 
 export async function handleApproveAccess(adminChatId: number, userIdToApprove: number, originalMsgId?: number) {
@@ -110,8 +103,8 @@ export async function handleDenyAccess(adminChatId: number, userIdToDeny: number
     }
 }
 
-export async function handleAdminListUsers(chatId: number, page: number) {
-    const usersWithAccess = db.getAllUsersWithAccess().filter(u => !appConfigInstance.adminTelegramIds.includes(u.id));
+export async function handleAdminListUsers(chatId: number, page: number, messageId: number | undefined) {
+    const usersWithAccess = db.getAllUsersWithAccess();//.filter(u => !appConfigInstance.adminTelegramIds.includes(u.id));
     const ITEMS_PER_PAGE = 10;
 
     if (usersWithAccess.length === 0) {
@@ -130,7 +123,7 @@ export async function handleAdminListUsers(chatId: number, page: number) {
     const pageUsers = usersWithAccess.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
     let messageText = `👥 Пользователи с доступом (Страница ${currentPage + 1}/${totalPages}):\n`;
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    const inline_keyboard: InlineKeyboardButton[][] = [];
 
     if (pageUsers.length === 0 && currentPage > 0) {
         messageText = "На этой странице нет пользователей. Возможно, список изменился.";
@@ -141,7 +134,7 @@ export async function handleAdminListUsers(chatId: number, page: number) {
         });
     }
 
-    const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
+    const paginationButtons: InlineKeyboardButton[] = [];
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `admin_list_users_page_${currentPage - 1}` });
     }
@@ -156,23 +149,15 @@ export async function handleAdminListUsers(chatId: number, page: number) {
         inline_keyboard.push(paginationButtons);
     }
     inline_keyboard.push([{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]);
-
-    const adminState = db.getUser(chatId)?.state;
-    if (adminState && adminState.action === 'admin_viewing_users' && adminState.data?.messageId) {
-        try {
-            await botInstance.editMessageText(messageText, {
-                chat_id: chatId,
-                message_id: adminState.data.messageId,
-                reply_markup: { inline_keyboard }
-            });
-        } catch (e) {
-            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
-            db.updateUser(chatId, { state: { action: 'admin_viewing_users', data: { messageId: sentMessage.message_id } } });
-        }
-    } else {
-        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
-        db.updateUser(chatId, { state: { action: 'admin_viewing_users', data: { messageId: sentMessage.message_id } } });
-    }
+    
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: Math.pow(2, 32),
+        caption: messageText,
+        keyboard: inline_keyboard
+    });
     logActivity(`Admin ${chatId} requested user list (page ${page}) - WIP`);
 }
 
@@ -187,7 +172,7 @@ export async function handleSubnetList(chatId: number, messageId: number, page: 
     const pageIps = Object.entries(subnets).slice(startIndex, startIndex + ITEMS_PER_PAGE);
     
     let messageText = `📌 Списки IP (Страница ${currentPage + 1}/${totalPages}):\n`;
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    const inline_keyboard: InlineKeyboardButton[][] = [];
 
     if (pageIps.length === 0 && currentPage > 0) {
         messageText = "На этой странице нет данных. Похоже, список изменился.";
@@ -198,7 +183,7 @@ export async function handleSubnetList(chatId: number, messageId: number, page: 
         });
     }
 
-    const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
+    const paginationButtons: InlineKeyboardButton[] = [];
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `admin_subnets_${currentPage - 1}` });
     }
@@ -240,11 +225,12 @@ export async function handleSubnetList(chatId: number, messageId: number, page: 
 export async function handleSubnetCreation(chatId: number, userId: number, messageId: number) {
     const user = db.getUser(userId);
     
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+    const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
     ];
     
     const text = `📌 Напишите список IP в виде:\nName: название\nList: список IP через запятую\n<b>ИЛИ</b>\nSource: функция источника`
+    
     const reply = await botInstance.editMessageCaption(text, {
         chat_id: chatId,
         message_id: messageId,
@@ -266,10 +252,10 @@ export async function handleSubnetCreationText(userId: number, input: string) {
     const ips    = args.find(x => x.startsWith('List: '))?.slice('List: '.length)?.split(',')?.map(x => x.trim());
     const source = args.find(x => x.startsWith('Source: '))?.slice('Source: '.length);
     
-    if (!name) return await botInstance.sendMessage(userId, "Вы не указали имя списка (Name: )");
+    if (!name) { await botInstance.sendMessage(userId, "Вы не указали имя списка (Name: )"); return }
     else if (name.length < 4 || name.length > 20)
-               return await botInstance.sendMessage(userId, "Имя списка не вписывается в диапазон 4 - 20 символов.");
-    if (!ips && !source) return await botInstance.sendMessage(userId, "Вы не указали список или источник.");
+               { await botInstance.sendMessage(userId, "Имя списка не вписывается в диапазон 4 - 20 символов."); return }
+    if (!ips && !source) { await botInstance.sendMessage(userId, "Вы не указали список или источник."); return }
     
     const subnets = db.getSubnets();
     const keys = Object.keys(subnets);
@@ -294,7 +280,7 @@ export async function handleSubnetCreationText(userId: number, input: string) {
 export async function handleSubnetDeletion(chatId: number, userId: number, messageId: number) {
     const user = db.getUser(userId);
     
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+    const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
     ];
     
@@ -317,7 +303,7 @@ export async function handleSubnetDeletionText(userId: number, input: string) {
     const subnets: Record<string, Subnet> = db.getSubnets();
     
     const subnet = subnets[input];
-    if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
+    if (!subnet) { await botInstance.sendMessage(userId, "Список IP с данным ID не найден."); return }
     
     delete subnets[input];
     
@@ -336,7 +322,7 @@ export async function handleSubnetInfo(userId: number, id: number) {
     const subnets: Record<string, Subnet> = db.getSubnets();
     
     const subnet = subnets[id];
-    if (!subnet) return await botInstance.sendMessage(userId, "Список IP с данным ID не найден.");
+    if (!subnet) { await botInstance.sendMessage(userId, "Список IP с данным ID не найден."); return }
     
     try {
         let ips = [];
@@ -345,18 +331,17 @@ export async function handleSubnetInfo(userId: number, id: number) {
             ips = await sourceEval(subnet.source);
         }
         
-        console.log(ips)
-        
-        await botInstance.sendMessage(userId, `Список IP: ${ips.join(', ')}` + (subnet.source ? `\nФункция: ${subnet.source}` : ''));
+        const output = ips.slice(0, 20).join(', ') + (ips.length > 20 ? ( ' и ещё ' + (ips.length - 20) ) : '');
+        await botInstance.sendMessage(userId, `Список IP: ${output}` + (subnet.source ? `\n\nФункция: ${subnet.source}` : ''));
         
         logActivity(`Admin ${userId} finished config deletion`);
     } catch (e) {
-        console.log("Ошибка!", e)
+        logActivity(`Couldn't get subnet #${id} info for admin ${userId}`);
         await botInstance.sendMessage(userId, `Не удалось получить список IP!`);
     }
 }
 
-export async function handleAdminListAllConfigs(chatId: number, page: number) {
+export async function handleAdminListAllConfigs(chatId: number, page: number, messageId: number) {
     const allConfigsWithOwners = db.getAllConfigs();
     const ITEMS_PER_PAGE = 10;
 
@@ -375,7 +360,7 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
     const pageConfigs = allConfigsWithOwners.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
     let messageText = `⚙️ Все конфигурации (Страница ${currentPage + 1}/${totalPages}):\n`;
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    const inline_keyboard: InlineKeyboardButton[][] = [];
 
     pageConfigs.forEach((config, indexOnPage) => {
         const globalIndex = startIndex + indexOnPage;
@@ -387,7 +372,7 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
         inline_keyboard.push([{ text: `"${config.userGivenName}" от ${ownerIdentifier}`, callback_data: `admin_view_cfg_idx_${globalIndex}` }]);
     });
 
-    const paginationButtons: TelegramBot.InlineKeyboardButton[] = [];
+    const paginationButtons: InlineKeyboardButton[] = [];
     if (currentPage > 0) {
         paginationButtons.push({ text: "⬅️", callback_data: `admin_list_all_configs_page_${currentPage - 1}` });
     }
@@ -404,39 +389,47 @@ export async function handleAdminListAllConfigs(chatId: number, page: number) {
     inline_keyboard.push([{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]);
 
     const adminState = db.getUser(chatId)?.state;
-    if (adminState && adminState.action === 'admin_viewing_all_configs' && adminState.data?.messageId) {
-        try {
-            await botInstance.editMessageText(messageText, {
-                chat_id: chatId,
-                parse_mode: 'HTML',
-                message_id: adminState.data.messageId,
-                reply_markup: { inline_keyboard }
-            });
-        } catch (e) {
-            const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
-            db.updateUser(chatId, { state: { action: 'admin_viewing_all_configs', data: { messageId: sentMessage.message_id } } });
-        }
-    } else {
-        const sentMessage = await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard }, parse_mode: 'HTML' });
-        db.updateUser(chatId, { state: { action: 'admin_viewing_all_configs', data: { messageId: sentMessage.message_id } } });
-    }
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: Math.pow(2, 32),
+        caption: messageText,
+        keyboard: inline_keyboard
+    });
 
     logActivity(`Admin ${chatId} requested all configs list (page ${page}) - WIP`);
 }
 
-export async function handleAdminViewLogs(chatId: number) {
+const logs_keyboard = [[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]];
+
+export async function handleAdminViewLogs(chatId: number, messageId: number) {
     try {
         const logContent = await Bun.file('data/activity.log').text();
         const lines = logContent.split('\n').filter((line: string) => line.trim() !== '');
         const lastNLines = lines.slice(-20).join('\n');
         if (lastNLines) {
-            await botInstance.sendMessage(chatId, `Последние логи:\n\`\`\`\n${lastNLines}\n\`\`\``, {
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]] }
+            const caption = `Последние логи:\n<i>${lastNLines.slice(0, 900)}</i>`;
+            // @ts-ignore
+            await botInstance.sendCachedMedia(chatId, messageId, {
+                media: "empty.png",
+                uniqueKey: 'empty',
+                expiresIn: Math.pow(2, 32),
+                caption,
+                keyboard: logs_keyboard
             });
+            if (lastNLines.length > 900) 
+                await botInstance.sendMessage(chatId, '<i>' + lastNLines.slice(900, 1900) + '</i>', {
+                    parse_mode: 'HTML',
+                });
         } else {
-            await botInstance.sendMessage(chatId, "Файл логов пуст.", {
-                reply_markup: { inline_keyboard: [[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]] }
+            // @ts-ignore
+            await botInstance.sendCachedMedia(chatId, messageId, {
+                media: "empty.png",
+                uniqueKey: 'empty',
+                expiresIn: Math.pow(2, 32),
+                caption: "Файл логов пуст.",
+                keyboard: logs_keyboard
             });
         }
     } catch (error) {
@@ -446,17 +439,13 @@ export async function handleAdminViewLogs(chatId: number) {
     logActivity(`Admin ${chatId} requested logs view - WIP`);
 }
 
-export async function handleAdminShowUsageStats(chatId: number) {
-    const placeholder = await botInstance.sendMessage(chatId, "📊 Собираю статистику по конфигурациям...");
-
+export async function handleAdminShowUsageStats(chatId: number, messageId: number) {
     try {
         const allConfigs = db.getAllConfigs();
 
         if (allConfigs.length === 0) {
-            await botInstance.editMessageText("Нет созданных конфигураций для отображения статистики.", {
-                chat_id: chatId,
-                message_id: placeholder.message_id,
-                reply_markup: { inline_keyboard: [[{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]] }
+            await botInstance.sendMessage(chatId, "Нет созданных конфигураций для отображения статистики.", {
+                reply_markup: { inline_keyboard: logs_keyboard }
             });
             return;
         }
@@ -469,29 +458,34 @@ export async function handleAdminShowUsageStats(chatId: number) {
                 usage: totalUsage,
             };
         }).sort((a, b) => b.usage - a.usage);
-
-        const chartImageBuffer = await generateTopUsersChart(configUsage);
-
-        await botInstance.sendPhoto(chatId, chartImageBuffer, {
+        
+        const keyboard = [
+            [{ text: "🔄 Обновить", callback_data: "admin_show_usage_stats" }],
+            [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
+        ];
+        
+        function getImage() {
+            return generateTopUsersChart(configUsage);
+        }
+        
+        // @ts-ignore
+        await botInstance.sendCachedMedia(chatId, messageId, {
+            media: getImage,
+            uniqueKey: 'top-configs',
+            expiresIn: 60 * 1000,
             caption: '📊 <b>Топ конфигураций по общему потреблению трафика</b>',
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "🔄 Обновить", callback_data: "admin_show_usage_stats" }],
-                    [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
-                ]
-            }
+            keyboard,
         });
-        await botInstance.deleteMessage(chatId, placeholder.message_id);
+        
         logActivity(`Admin ${chatId} viewed config usage stats chart.`);
     } catch (error) {
         console.error("Failed to generate or send config usage chart:", error);
         logActivity(`Failed to generate or send config usage chart for admin ${chatId}: ${error}`);
-        await botInstance.editMessageText("⚠️ Не удалось создать график статистики.", { chat_id: chatId, message_id: placeholder.message_id });
+        await botInstance.sendMessage(chatId, "⚠️ Не удалось создать график статистики.");
     }
 }
 
-export async function handleAdminViewUser(chatId: number, userIdToView: number) {
+export async function handleAdminViewUser(chatId: number, userIdToView: number, messageId: number) {
     const user = db.getUser(userIdToView);
 
     if (!user) {
@@ -518,13 +512,23 @@ export async function handleAdminViewUser(chatId: number, userIdToView: number) 
         messageText += `  У пользователя нет конфигураций.\n`;
     }
 
-    const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+    const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "🚫 Отозвать доступ", callback_data: `admin_revoke_access_ask_${user.id}` }],
         [{ text: "⬅️ К списку пользователей", callback_data: "admin_list_users_page_0" }],
         [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
     ];
-
-    await botInstance.sendMessage(chatId, messageText, { reply_markup: { inline_keyboard } });
+    
+    // @ts-ignore
+    await botInstance.sendCachedMedia(chatId, messageId, {
+        media: "empty.png",
+        uniqueKey: 'empty',
+        expiresIn: Math.pow(2, 32),
+        caption: messageText.slice(0, 1024),
+        keyboard: inline_keyboard
+    });
+    
+    if (messageText.length >= 1024) await botInstance.sendMessage(chatId, messageText.slice(1024), { parse_mode: 'HTML' })
+    
     logActivity(`Admin ${chatId} viewed details for user ${userIdToView}`);
 }
 
@@ -562,22 +566,20 @@ export async function handleAdminRevokeAccessConfirm(adminChatId: number, userId
     } catch (e: any) {
         logActivity(`Failed to notify user ${userIdToRevoke} about access revocation: ${e.message}`);
     }
-    await handleAdminListUsers(adminChatId, 0);
+    await handleAdminListUsers(adminChatId, 0, undefined);
 }
 
 
-export async function handleAdminViewConfig(adminChatId: number, ownerId: number, messageId: number | undefined, wgEasyClientId: string) {
-    const placeholderMessage = await botInstance.sendMessage(adminChatId, `👑 Админ: Загрузка деталей конфига...`);
-
+export async function handleAdminViewConfig(chatId: number, ownerId: number, messageId: number, wgEasyClientId: string) {
     try {
         const owner = db.getUser(ownerId);
         if (!owner) {
-            await botInstance.editMessageText("Владелец конфигурации не найден.", { chat_id: adminChatId, message_id: placeholderMessage.message_id });
+            await botInstance.sendMessage(chatId, "Владелец конфигурации не найден.");
             return;
         }
         const config = owner.configs.find(c => c.wgEasyClientId === wgEasyClientId);
         if (!config) {
-            await botInstance.editMessageText("Конфигурация не найдена у указанного владельца.", { chat_id: adminChatId, message_id: placeholderMessage.message_id });
+            await botInstance.sendMessage(chatId, "Конфигурация не найдена у указанного владельца.");
             return;
         }
 
@@ -599,16 +601,14 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
 
         text += `<b>Клиент ID (wg-easy):</b> ${config.wgEasyClientId}`;
 
-        const chartImageBuffer = await generateMonthlyUsageChart(config.dailyUsage);
-
         const allConfigs = db.getAllConfigs();
         const globalConfigIndex = allConfigs.findIndex(c => c.ownerId === ownerId && c.wgEasyClientId === wgEasyClientId);
         if (globalConfigIndex === -1) {
-            await botInstance.sendMessage(adminChatId, "Ошибка: не удалось найти глобальный индекс конфигурации.");
+            await botInstance.sendMessage(chatId, "Ошибка: не удалось найти глобальный индекс конфигурации.");
             return;
         }
 
-        const inline_keyboard: TelegramBot.InlineKeyboardButton[][] = [
+        const inline_keyboard: InlineKeyboardButton[][] = [
             [
                 { text: "📥 Скачать (.conf)", callback_data: `admin_dl_config_${ownerId}_${wgEasyClientId}` },
                 { text: "📱 QR-код", callback_data: `admin_qr_config_${ownerId}_${wgEasyClientId}` }
@@ -625,20 +625,24 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
                 { text: "⬅️ К списку всех конфигов", callback_data: `admin_list_all_configs_page_0` }
             ]
         ];
-
-        await botInstance.sendPhoto(adminChatId, chartImageBuffer, {
+        
+        function getImage() {
+            if (!config?.dailyUsage) return 'empty.png'; 
+            return generateMonthlyUsageChart(config.dailyUsage);
+        }
+        
+        // @ts-ignore
+        await botInstance.sendCachedMedia(chatId, messageId, {
+            media: getImage,
+            uniqueKey: 'empty',
+            expiresIn: Math.pow(2, 32),
             caption: text,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard }
+            keyboard: inline_keyboard
         });
-        await botInstance.deleteMessage(adminChatId, placeholderMessage.message_id);
     } catch (error) {
         console.error(`Admin failed to show config details with chart for ${wgEasyClientId}:`, error);
         logActivity(`Admin failed to show config details with chart for ${wgEasyClientId}: ${error}`);
-        await botInstance.editMessageText(`⚠️ Не удалось загрузить детали конфигурации с графиком.`, {
-            chat_id: adminChatId,
-            message_id: placeholderMessage.message_id,
-        });
+        await botInstance.sendMessage(chatId, `⚠️ Не удалось загрузить детали конфигурации с графиком.`);
     }
 }
 
@@ -648,7 +652,7 @@ export async function handleAdminViewConfig(adminChatId: number, ownerId: number
 // userFlow.handleConfigAction, вызывая соответствующие wgAPI функции
 // и обновляя состояние конфига в db.updateUser(ownerId, ...).
 
-export async function handleAdminConfigAction(adminChatId: number, actionWithPrefix: string, configIdentifier: string) {
+export async function handleAdminConfigAction(chatId: number, actionWithPrefix: string, configIdentifier: string, messageId: number) {
     const allConfigs = db.getAllConfigs();
     let ownerId: number;
     let wgEasyClientId: string;
@@ -661,41 +665,41 @@ export async function handleAdminConfigAction(adminChatId: number, actionWithPre
     if (actionWithPrefix.includes('_cfg_idx_')) {
         const globalIndex = parseInt(configIdentifier);
         if (isNaN(globalIndex) || globalIndex < 0 || globalIndex >= allConfigs.length) {
-            await botInstance.sendMessage(adminChatId, "Ошибка: неверный индекс конфигурации.");
+            await botInstance.sendMessage(chatId, "Ошибка: неверный индекс конфигурации.");
             return;
         }
         const targetFullConfig = allConfigs[globalIndex];
         ownerId = targetFullConfig.ownerId;
         wgEasyClientId = targetFullConfig.wgEasyClientId;
         owner = db.getUser(ownerId);
-        if (!owner) { await botInstance.sendMessage(adminChatId, "Владелец конфигурации не найден."); return; }
+        if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
         configIndexInDb = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-        if (configIndexInDb === -1) { await botInstance.sendMessage(adminChatId, "Конфигурация не найдена у владельца."); return; }
+        if (configIndexInDb === -1) { await botInstance.sendMessage(chatId, "Конфигурация не найдена у владельца."); return; }
         config = owner.configs[configIndexInDb];
     } else {
         const parts = configIdentifier.split('_');
         ownerId = parseInt(parts[0]);
         wgEasyClientId = parts[1];
         owner = db.getUser(ownerId);
-        if (!owner) { await botInstance.sendMessage(adminChatId, "Владелец конфигурации не найден."); return; }
+        if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
         configIndexInDb = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-        if (configIndexInDb === -1) { await botInstance.sendMessage(adminChatId, "Конфигурация не найдена у владельца."); return; }
+        if (configIndexInDb === -1) { await botInstance.sendMessage(chatId, "Конфигурация не найдена у владельца."); return; }
         config = owner.configs[configIndexInDb];
     }
 
     if (!owner || !config) return;
 
-    logActivity(`Admin ${adminChatId} performing action '${action}' on config ${wgEasyClientId} of user ${ownerId}`);
+    logActivity(`Admin ${chatId} performing action '${action}' on config ${wgEasyClientId} of user ${ownerId}`);
 
     // Пример для disable:
     if (action === 'disable') {
         if (await wgAPI.disableWgClient(wgEasyClientId)) {
             owner.configs[configIndexInDb].isEnabled = false;
             db.updateUser(ownerId, { configs: owner.configs });
-            logActivity(`Admin ${adminChatId} disabled config ${wgEasyClientId} for user ${ownerId}`);
-            await handleAdminViewConfig(adminChatId, ownerId, undefined, wgEasyClientId);
+            logActivity(`Admin ${chatId} disabled config ${wgEasyClientId} for user ${ownerId}`);
+            await handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
         } else {
-            await botInstance.sendMessage(adminChatId, "Не удалось отключить конфигурацию через API.");
+            await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию через API.");
         }
         return;
     }
@@ -705,5 +709,5 @@ export async function handleAdminConfigAction(adminChatId: number, actionWithPre
     // delete_ask должен показать подтверждение с callback_data `admin_delete_cfg_confirm_idx_${globalIndex}`
     // delete_confirm должен удалить из wgAPI и из db, затем показать список всех конфигов.
 
-    await botInstance.sendMessage(adminChatId, `Действие '${action}' для конфига ${wgEasyClientId} (владелец ${ownerId}) в разработке.`);
+    await botInstance.sendMessage(chatId, `Действие '${action}' для конфига ${wgEasyClientId} (владелец ${ownerId}) в разработке.`);
 }
