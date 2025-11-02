@@ -65,7 +65,9 @@ export async function handleStartWithToken(msg: TelegramBot.Message, token: stri
     const ownershipToken = db.getOwnershipToken(token);
     if (ownershipToken) {
         const newOwnerId = msg.from!.id;
-        const newOwnerUsername = msg.from!.username || msg.from!.first_name;
+        const newOwnerUsername = msg.from?.username || `${msg.from?.first_name} ${msg.from?.last_name || ''}`.trim();
+
+        db.ensureUser(newOwnerId, newOwnerUsername);
         
         if (newOwnerId === ownershipToken.creatorId) {
             await botInstance.sendMessage(newOwnerId, "Вы не можете использовать собственную пригласительную ссылку.");
