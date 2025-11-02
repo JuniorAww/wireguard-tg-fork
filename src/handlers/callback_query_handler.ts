@@ -116,7 +116,7 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         }
 
         // Админский флоу
-        if ((data.startsWith('admin') || data.includes('_access_'))
+        if ((data.startsWith('admin') || data.startsWith('ad_') || data.includes('_access_'))
         && appConfigInstance.adminTelegramIds.includes(userId)
         /*&& db.getUser(userId).role === 2*/) {
             if (data.startsWith('approve_access_')) {
@@ -194,6 +194,14 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
+            if (data.startsWith('ad_vc_')) { // admin_view_config
+                const parts = data.substring('ad_vc_'.length).split('_');
+                const ownerId = parseInt(parts[0]);
+                const wgEasyClientId = parts[1];
+                await adminFlow.handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
+                await botInstance.answerCallbackQuery(query.id);
+                return;
+            }
             // Действия с конфигом от админа
             const adminConfigActionMatch = data.match(/^(ad_(?:dl|qr|dis|en|del_a|del_c))_(\d+)_([0-9a-fA-F-]+)$/);
             if (adminConfigActionMatch) {
@@ -201,9 +209,9 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 const ownerId = parseInt(adminConfigActionMatch[2], 10);
                 const wgEasyClientId = adminConfigActionMatch[3];
 
-                await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${ownerId}_${wgEasyClientId}`, messageId);
+                await adminFlow.handleAdminConfigAction(chatId, userId, actionWithPrefix, ownerId, wgEasyClientId, messageId, query.id);
 
-                if (!actionWithPrefix.endsWith('_ask')) {
+                if (!actionWithPrefix.endsWith('_a')) { // Не отвечаем на _ask
                     try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
                 }
                 return;

@@ -885,10 +885,19 @@ export async function handleConfigAction(chatId: number, currentUserId: number, 
                     const newConfigs = owner.configs.filter(c => c.wgEasyClientId !== wgEasyClientId);
                     db.updateUser(ownerId, { configs: newConfigs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" удалена.` }); // callback_query_handler
-                    await botInstance.sendMessage(chatId, `➖ Конфигурация "${config.userGivenName}" удалена.`); // TODO: edit message instead of sending new one
                     logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${ownerId}`);
-                    if (isAdminAction) await handleAdminListAllConfigs(chatId, 0, messageId);
-                    else await handleListMyConfigs(chatId, currentUserId, messageId, 0);
+                    
+                    await botInstance.answerCallbackQuery(callbackQueryId, { text: `Конфигурация "${config.userGivenName}" удалена.` });
+                    if (isAdminAction) {
+                        await botInstance.editMessageCaption(`✅ Конфигурация "${config.userGivenName}" удалена.`, {
+                            chat_id: chatId,
+                            message_id: messageId,
+                            reply_markup: { inline_keyboard: [] }
+                        });
+                        await handleAdminListAllConfigs(chatId, 0, messageId);
+                    } else {
+                        await handleListMyConfigs(chatId, currentUserId, messageId, 0);
+                    }
 
                     if (sharedWithId) {
                         const sharedUser = db.getUser(sharedWithId);

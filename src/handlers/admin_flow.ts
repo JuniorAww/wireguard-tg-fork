@@ -667,68 +667,80 @@ export async function handleAdminViewConfig(chatId: number, ownerId: number, mes
     }
 }
 
-// Действия с конфигурациями от имени администратора (скачивание, QR, вкл/выкл, удаление)
-// Эти функции будут очень похожи на userFlow.handleConfigAction, но с префиксом 'admin_'
-// и будут принимать ownerId.
-// userFlow.handleConfigAction, вызывая соответствующие wgAPI функции
-// и обновляя состояние конфига в db.updateUser(ownerId, ...).
-
-export async function handleAdminConfigAction(chatId: number, actionWithPrefix: string, configIdentifier: string, messageId: number) {
-    const allConfigs = db.getAllConfigs();
-    let ownerId: number;
-    let wgEasyClientId: string;
-    let configIndexInDb: number;
-    let owner: User | undefined;
-    let config: UserConfig | undefined;
-
-    const action = actionWithPrefix.replace('ad_', '').replace(/_cfg_idx$/, ''); // e.g. dl_config, disable, delete_ask
-
-    if (actionWithPrefix.includes('_cfg_idx_')) {
-        const globalIndex = parseInt(configIdentifier);
-        if (isNaN(globalIndex) || globalIndex < 0 || globalIndex >= allConfigs.length) {
-            await botInstance.sendMessage(chatId, "Ошибка: неверный индекс конфигурации.");
-            return;
-        }
-        const targetFullConfig = allConfigs[globalIndex];
-        ownerId = targetFullConfig.ownerId;
-        wgEasyClientId = targetFullConfig.wgEasyClientId;
-        owner = db.getUser(ownerId);
-        if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
-        configIndexInDb = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-        if (configIndexInDb === -1) { await botInstance.sendMessage(chatId, "Конфигурация не найдена у владельца."); return; }
-        config = owner.configs[configIndexInDb];
-    } else {
-        const parts = configIdentifier.split('_');
-        ownerId = parseInt(parts[0]);
-        wgEasyClientId = parts[1];
-        owner = db.getUser(ownerId);
-        if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
-        configIndexInDb = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
-        if (configIndexInDb === -1) { await botInstance.sendMessage(chatId, "Конфигурация не найдена у владельца."); return; }
-        config = owner.configs[configIndexInDb];
+export async function handleAdminConfigAction(chatId: number, currentUserId: number, actionWithPrefix: string, ownerId: number, wgEasyClientId: string, messageId: number, callbackQueryId: string) {
+    const owner = db.getUser(ownerId);
+    if (!owner) {
+        await botInstance.sendMessage(chatId, "Владелец конфигурации не найден.");
+        return;
     }
+
+    const configIndexInDb = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
+    if (configIndexInDb === -1) {
+        await botInstance.sendMessage(chatId, "Конфигурация не найдена у владельца.");
+        return;
+    }
+    const config = owner.configs[configIndexInDb];
+    const action = actionWithPrefix.replace('ad_', '');
 
     if (!owner || !config) return;
 
     logActivity(`Admin ${chatId} performing action '${action}' on config ${wgEasyClientId} of user ${ownerId}`);
 
-    // Пример для disable:
-    if (action === 'disable') {
-        if (await wgAPI.disableWgClient(wgEasyClientId)) {
-            owner.configs[configIndexInDb].isEnabled = false;
-            db.updateUser(ownerId, { configs: owner.configs });
-            logActivity(`Admin ${chatId} disabled config ${wgEasyClientId} for user ${ownerId}`);
-            await handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
-        } else {
-            await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию через API.");
+    switch (action) {
+        case 'dl': {
+            const fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
+            if (typeof fileContent === 'string' && fileContent.length > 0) {
+                await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
+                    filename: `admin_${config.userGivenName}.conf`,
+                    contentType: 'text/plain'
+                });
+            } else {
+                await botInstance.sendMessage(chatId, "Не удалось получить файл конфигурации.");
+            }
+            break;
         }
-        return;
+        case 'qr': {
+            const qrBuffer = await wgAPI.getClientQrCodeSvg(wgEasyClientId);
+            if (qrBuffer instanceof Buffer && qrBuffer.length > 0) {
+                await botInstance.sendPhoto(chatId, qrBuffer, { caption: `QR-код для ${config.userGivenName}` });
+            } else {
+                await botInstance.sendMessage(chatId, "Не удалось получить QR-код.");
+            }
+            break;
+        }
+        case 'dis': {
+            if (await wgAPI.disableWgClient(wgEasyClientId)) {
+                owner.configs[configIndexInDb].isEnabled = false;
+                db.updateUser(ownerId, { configs: owner.configs });
+                await handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
+            } else {
+                await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию через API.");
+            }
+            break;
+        }
+        case 'en': {
+            if (await wgAPI.enableWgClient(wgEasyClientId)) {
+                owner.configs[configIndexInDb].isEnabled = true;
+                db.updateUser(ownerId, { configs: owner.configs });
+                await handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
+            } else {
+                await botInstance.sendMessage(chatId, "Не удалось включить конфигурацию через API.");
+            }
+            break;
+        }
+        case 'del_a': {
+            await botInstance.editMessageCaption(`Вы уверены, что хотите удалить конфигурацию "${config.userGivenName}" пользователя ${owner.username}?`, {
+                chat_id: chatId,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [[{ text: "🗑 Да, удалить", callback_data: `ad_del_c_${ownerId}_${wgEasyClientId}` }, { text: "⬅️ Нет, отмена", callback_data: `ad_vc_${ownerId}_${wgEasyClientId}` }]]
+                }
+            });
+            break;
+        }
+        case 'del_c': {
+            await userFlow.handleConfigAction(chatId, currentUserId, messageId, 'dc', ownerId, wgEasyClientId, callbackQueryId, true);
+            break;
+        }
     }
-
-    // TODO: Реализовать остальные действия: enable, delete_ask, delete_confirm, dl_config, qr_config
-    // dl_config и qr_config будут похожи на userFlow, просто отправляя файлы админу.
-    // delete_ask должен показать подтверждение с callback_data `admin_delete_cfg_confirm_idx_${globalIndex}`
-    // delete_confirm должен удалить из wgAPI и из db, затем показать список всех конфигов.
-
-    await botInstance.sendMessage(chatId, `Действие '${action}' для конфига ${wgEasyClientId} (владелец ${ownerId}) в разработке.`);
 }

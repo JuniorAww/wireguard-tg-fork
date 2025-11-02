@@ -1,6 +1,6 @@
 {
   "name": "wireguard-tg",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "scripts": {
     "start": "bun run src/bot.ts",
     "dev": "bun --watch src/bot.ts",
