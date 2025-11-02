@@ -85,7 +85,7 @@ function updateTables(database: Database) {
 		for (const userId in database.users) {
 			const user = database.users[userId]
 			user.settings = {
-                utc: 2
+                utc: 3
             }
 		}
 	}

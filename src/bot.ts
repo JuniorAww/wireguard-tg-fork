@@ -87,11 +87,11 @@ bot.onText(/\/start/, async (msg) => {
     await handleStart(msg);
 });
 
-bot.onText(/❓ Плохо работает VPN/, async (msg) => {
+bot.onText(/✍️ Обратная связь/, async (msg) => {
     const user = db.getUser(msg.from!.id);
     if (user) {
-        logActivity(`User ${msg.from!.id} selected '❓ Плохо работает VPN'`);
-        await userFlow.handleVpnHelp(msg.chat.id);
+        logActivity(`User ${msg.from!.id} selected '✍️ Обратная связь'`);
+        await userFlow.handleRequestFeedback(msg.chat.id, msg.from!.id);
     }
 });
 
@@ -130,7 +130,7 @@ bot.on('message', async (msg) => {
 
     const knownTextCommands = [
         "⚡ Открыть главное меню",
-        "❓ Плохо работает VPN",
+        "✍️ Обратная связь",
     ];
 
     if (msg.text && (msg.text.startsWith('/') || knownTextCommands.includes(msg.text))) {
