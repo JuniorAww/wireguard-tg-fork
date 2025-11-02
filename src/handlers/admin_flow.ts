@@ -22,10 +22,9 @@ export function initAdminFlow(bot: TelegramBot, appCfg: AppConfig) {
 export async function showAdminMainMenu(chatId: number, messageId: number) {
     const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "👥 Пользователи", callback_data: "admin_list_users_page_0" },
-        { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
-        [{ text: "📝 Просмотр логов", callback_data: "admin_view_logs" },
-        { text: "📊 Статистика", callback_data: "admin_show_stats" }],
-        [{ text: "📌 Списки IP", callback_data: "admin_subnets_0" }],
+         { text: "⚙️ Все конфиги", callback_data: "admin_list_all_configs_page_0" }],
+        [{ text: "📌 Списки IP", callback_data: "admin_subnets_0" },
+         { text: "📊 Статистика", callback_data: "admin_show_stats" }],
         [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }],
     ];
     
@@ -130,7 +129,7 @@ export async function handleAdminListUsers(chatId: number, page: number, message
     } else {
         pageUsers.forEach(user => {
             const userIdentifier = user.username ? `@${user.username}` : `ID: ${user.id}`;
-            inline_keyboard.push([{ text: userIdentifier, callback_data: `admin_view_user_${user.id}` }]);
+            inline_keyboard.push([{ text: userIdentifier, callback_data: `admin_view_user_${user.id}_0` }]);
         });
     }
 
@@ -485,7 +484,7 @@ export async function handleAdminShowUsageStats(chatId: number, messageId: numbe
     }
 }
 
-export async function handleAdminViewUser(chatId: number, userIdToView: number, messageId: number) {
+export async function handleAdminViewUser(chatId: number, userIdToView: number, messageId: number, page: number = 0) {
     const user = db.getUser(userIdToView);
 
     if (!user) {
@@ -495,41 +494,63 @@ export async function handleAdminViewUser(chatId: number, userIdToView: number, 
         return;
     }
 
+    const ITEMS_PER_PAGE = 10;
+    const totalPages = Math.ceil(user.configs.length / ITEMS_PER_PAGE) || 1;
+    const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+
+    const startIndex = currentPage * ITEMS_PER_PAGE;
+    const pageConfigs = user.configs.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
     let messageText = `ℹ️ Информация о пользователе:\n`;
     messageText += `ID: ${user.id}\n`;
     messageText += `Username: ${user.username || "Не указан"}\n`;
     messageText += `Доступ получен: ${user.accessGrantedAt ? new Date(user.accessGrantedAt).toLocaleString('ru-RU') : "Неизвестно"}\n`;
-    messageText += `Конфигурации (${user.configs.length} шт.):\n`;
+    messageText += `Конфигурации (${user.configs.length} шт.`;
+    if (user.configs.length > ITEMS_PER_PAGE) {
+        messageText += `, стр. ${currentPage + 1}/${totalPages}`;
+    }
+    messageText += '):\n';
 
-    if (user.configs.length > 0) {
-        user.configs.forEach(config => {
+    if (pageConfigs.length > 0) {
+        pageConfigs.forEach(config => {
             const totalTx = config.totalTx || 0;
             const totalRx = config.totalRx || 0;
             const statusIcon = config.isEnabled ? '✅' : '❌';
             messageText += `  ${statusIcon} "${config.userGivenName}" (скачано: ${getUsageText(totalTx)}, отправлено: ${getUsageText(totalRx)})\n`;
         });
     } else {
-        messageText += `  У пользователя нет конфигураций.\n`;
+        messageText += `  Нет конфигураций` + (page > 0 ? ` на этой странице.\n` : `.\n`);
     }
 
     const inline_keyboard: InlineKeyboardButton[][] = [
         [{ text: "🚫 Отозвать доступ", callback_data: `admin_revoke_access_ask_${user.id}` }],
-        [{ text: "⬅️ К списку пользователей", callback_data: "admin_list_users_page_0" }],
-        [{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]
     ];
+
+    const paginationButtons: InlineKeyboardButton[] = [];
+    if (currentPage > 0) {
+        paginationButtons.push({ text: "⬅️", callback_data: `admin_view_user_${userIdToView}_${currentPage - 1}` });
+    }
+    if (totalPages > 1) {
+        paginationButtons.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "noop" });
+    }
+    if (currentPage < totalPages - 1) {
+        paginationButtons.push({ text: "➡️", callback_data: `admin_view_user_${userIdToView}_${currentPage + 1}` });
+    }
+    if (paginationButtons.length > 0) inline_keyboard.push(paginationButtons);
+
+    inline_keyboard.push([{ text: "⬅️ К списку пользователей", callback_data: "admin_list_users_page_0" }]);
+    inline_keyboard.push([{ text: "⬅️ Назад в админ-меню", callback_data: "admin_main_menu" }]);
     
     // @ts-ignore
     await botInstance.sendCachedMedia(chatId, messageId, {
         media: "empty.png",
         uniqueKey: 'empty',
         expiresIn: Math.pow(2, 32),
-        caption: messageText.slice(0, 1024),
+        caption: messageText,
         keyboard: inline_keyboard
     });
-    
-    if (messageText.length >= 1024) await botInstance.sendMessage(chatId, messageText.slice(1024), { parse_mode: 'HTML' })
-    
-    logActivity(`Admin ${chatId} viewed details for user ${userIdToView}`);
+
+    logActivity(`Admin ${chatId} viewed details for user ${userIdToView} (page ${page})`);
 }
 
 export async function handleAdminRevokeAccessAsk(chatId: number, userIdToRevoke: number) {
@@ -543,7 +564,7 @@ export async function handleAdminRevokeAccessAsk(chatId: number, userIdToRevoke:
         reply_markup: {
             inline_keyboard: [
                 [{ text: "🚫 Да, отозвать", callback_data: `admin_revoke_access_confirm_${userIdToRevoke}` }],
-                [{ text: "⬅️ Нет, отмена", callback_data: `admin_view_user_${userIdToRevoke}` }]
+                [{ text: "⬅️ Нет, отмена", callback_data: `admin_view_user_${userIdToRevoke}_0` }]
             ]
         }
     });

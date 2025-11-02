@@ -81,10 +81,6 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 }
                 return;
             }
-            if (data === 'request_feedback') {
-                await userFlow.handleRequestFeedback(chatId, userId);
-                return;
-            }
         }
         
         // + Пользовательский флоу (с доступом)
@@ -136,8 +132,10 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 return;
             }
             if (data.startsWith('admin_view_user_')) {
-                const userIdToView = parseInt(data.substring('admin_view_user_'.length));
-                await adminFlow.handleAdminViewUser(chatId, userIdToView, messageId);
+                const parts = data.substring('admin_view_user_'.length).split('_');
+                const userIdToView = parseInt(parts[0], 10);
+                const page = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+                await adminFlow.handleAdminViewUser(chatId, userIdToView, messageId, page);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
@@ -204,11 +202,6 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 if (!actionWithPrefix.endsWith('_ask')) {
                     try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
                 }
-                return;
-            }
-            if (data === 'admin_view_logs') {
-                await adminFlow.handleAdminViewLogs(chatId, messageId);
-                await botInstance.answerCallbackQuery(query.id);
                 return;
             }
             if (data.startsWith('admin_subnets_')) {

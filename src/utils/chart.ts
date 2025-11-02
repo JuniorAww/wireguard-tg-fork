@@ -177,7 +177,7 @@ export async function generateMonthlyUsageChart(dailyUsage: DailyUsage[] = []): 
 }
 
 export async function generateTopUsersChart(userUsage: { name: string, usage: number }[]): Promise<Buffer> {
-    const topUsers = userUsage.slice(0, 10).reverse();
+    const topUsers = userUsage.slice(0, 10);
 
     const labels = topUsers.map(u => u.name);
     const largest = topUsers.sort((a,b) => b.usage - a.usage)?.[0]?.usage || 0;
