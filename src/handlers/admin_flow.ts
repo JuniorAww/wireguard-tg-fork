@@ -631,16 +631,16 @@ export async function handleAdminViewConfig(chatId: number, ownerId: number, mes
 
         const inline_keyboard: InlineKeyboardButton[][] = [
             [
-                { text: "📥 Скачать (.conf)", callback_data: `admin_dl_config_${ownerId}_${wgEasyClientId}` },
-                { text: "📱 QR-код", callback_data: `admin_qr_config_${ownerId}_${wgEasyClientId}` }
+                { text: "📥 Скачать (.conf)", callback_data: `ad_dl_${ownerId}_${wgEasyClientId}` },
+                { text: "📱 QR-код", callback_data: `ad_qr_${ownerId}_${wgEasyClientId}` }
             ],
             [
                 config.isEnabled
-                    ? { text: "🚫 Отключить", callback_data: `admin_disable_cfg_idx_${globalConfigIndex}` }
-                    : { text: "▶️ Включить", callback_data: `admin_enable_cfg_idx_${globalConfigIndex}` }
+                    ? { text: "🚫 Отключить", callback_data: `ad_dis_${ownerId}_${wgEasyClientId}` }
+                    : { text: "▶️ Включить", callback_data: `ad_en_${ownerId}_${wgEasyClientId}` }
             ],
             [
-                { text: "🗑 Удалить (Админ)", callback_data: `admin_delete_cfg_ask_idx_${globalConfigIndex}` }
+                { text: "🗑 Удалить (Админ)", callback_data: `ad_del_a_${ownerId}_${wgEasyClientId}` }
             ],
             [
                 { text: "⬅️ К списку всех конфигов", callback_data: `admin_list_all_configs_page_0` }
@@ -681,7 +681,7 @@ export async function handleAdminConfigAction(chatId: number, actionWithPrefix: 
     let owner: User | undefined;
     let config: UserConfig | undefined;
 
-    const action = actionWithPrefix.replace('admin_', '').replace(/_cfg_idx$/, ''); // e.g. dl_config, disable, delete_ask
+    const action = actionWithPrefix.replace('ad_', '').replace(/_cfg_idx$/, ''); // e.g. dl_config, disable, delete_ask
 
     if (actionWithPrefix.includes('_cfg_idx_')) {
         const globalIndex = parseInt(configIdentifier);

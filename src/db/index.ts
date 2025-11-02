@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Database, User, AccessRequest, UserConfig, Subnet } from '$/db/types';
+import { Database, User, AccessRequest, UserConfig, Subnet, ConfigOwnershipToken } from '$/db/types';
 import { logActivity } from '$/utils/logger';
 
 const dbFilePath = path.join(process.cwd(), 'data', 'database.json');
@@ -9,6 +9,7 @@ const SAVE_INTERVAL = 15 * 1000; // 15 секунд
 let database: Database = {
     users: {},
     accessRequests: {},
+    configOwnershipTokens: {},
     subnets: {},
 };
 
@@ -89,6 +90,11 @@ function updateTables(database: Database) {
             }
 		}
 	}
+
+    if (!database.configOwnershipTokens) {
+        logActivity(`Config migration (ownership tokens)`);
+        database.configOwnershipTokens = {};
+    }
 }
 
 export function saveDb(): void {
@@ -118,7 +124,7 @@ export function ensureUser(userId: number, username?: string): User {
             hasAccess: false,
             configs: [],
             subnets: {},
-            settings: { utc: 2 },
+            settings: { utc: 3 },
         };
         logActivity(`New user created: ${userId} (${username || 'N/A'})`);
     } else if (username && database.users[userId].username !== username) {
@@ -161,7 +167,9 @@ export function getAllConfigs(): Array<UserConfig & { ownerId: number, ownerUser
     for (const userId in database.users) {
         const user = database.users[userId];
         user.configs.forEach(config => {
-            allConfigs.push({
+            // @ts-ignore
+            if (config.ownerId === undefined)
+                allConfigs.push({
                 ...config,
                 ownerId: user.id,
                 ownerUsername: user.username
@@ -173,4 +181,26 @@ export function getAllConfigs(): Array<UserConfig & { ownerId: number, ownerUser
 
 export function getSubnets(): Record<number, Subnet> {
 	return database.subnets;
+}
+
+export function addOwnershipToken(token: ConfigOwnershipToken): void {
+    database.configOwnershipTokens[token.token] = token;
+    logActivity(`Ownership token ${token.token} created for creator ${token.creatorId}`);
+}
+
+export function getOwnershipToken(token: string): ConfigOwnershipToken | undefined {
+    return database.configOwnershipTokens[token];
+}
+
+export function removeOwnershipToken(token: string): void {
+    if (database.configOwnershipTokens[token]) {
+        delete database.configOwnershipTokens[token];
+        logActivity(`Ownership token ${token} has been used and removed.`);
+    }
+}
+
+export function findOwnershipTokenByConfig(creatorId: number, deviceId: string, configName: string): ConfigOwnershipToken | undefined {
+    return Object.values(database.configOwnershipTokens).find(
+        t => t.creatorId === creatorId && t.deviceId === deviceId && t.configName === configName
+    );
 }

@@ -61,6 +61,7 @@ logActivity("Application configuration loaded from environment variables.");
 
 db.loadDb();
 initWgEasyApi(appConfig);
+let botUsername: string;
 
 const bot = new TelegramBot(appConfig.telegramBotToken, { polling: true });
 // TODO fix
@@ -72,6 +73,10 @@ initAdminFlow(bot, appConfig);
 initSettingsFlow(bot);
 initCallbackQueryHandler(bot, appConfig);
 
+bot.getMe().then(me => {
+    botUsername = me.username!;
+    logActivity(`Bot username: @${botUsername}`);
+});
 logActivity("Bot started successfully. Polling for updates...");
 //console.log("Telegram Bot успешно запущен и готов к работе!");
 console.log(`Admin IDs: ${appConfig.adminTelegramIds.join(', ')}`);
@@ -83,8 +88,16 @@ console.log(`wg-easy API URL: ${appConfig.wgEasyApiUrl}`);
 ============ */
 
 bot.onText(/\/start/, async (msg) => {
-    logActivity(`Received /start command from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
-    await handleStart(msg);
+    const payload = msg.text?.split(' ')[1];
+    if (payload) {
+        logActivity(`Received /start command with payload ${payload} from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
+        const tokenConsumed = await userFlow.handleStartWithToken(msg, payload);
+        if (tokenConsumed) return; // Если токен обработан, не показываем главное меню сразу
+    }
+    else {
+        logActivity(`Received /start command from ${msg.from?.id} (${msg.from?.username || 'N/A'})`);
+    }
+    await userFlow.handleStart(msg);
 });
 
 bot.onText(/✍️ Обратная связь/, async (msg) => {
@@ -96,10 +109,14 @@ bot.onText(/✍️ Обратная связь/, async (msg) => {
 });
 
 bot.onText(/⚡ Открыть главное меню/, async (msg) => {
-    const user = db.getUser(msg.from!.id);
-    if (user && (user.hasAccess || user.configs.length)) {
-        logActivity(`User ${msg.from!.id} selected '⬅️ Главное меню'`);
-        await userFlow.showMainMenu(msg.chat.id, msg.from!.id);
+    const userId = msg.from!.id;
+    const user = db.getUser(userId);
+    if (user) {
+        const hasSharedConfigs = db.getAllConfigs().some(c => c.sharedWith === userId);
+        if (user.hasAccess || user.configs.length || hasSharedConfigs) {
+            logActivity(`User ${userId} selected '⬅️ Главное меню'`);
+            await userFlow.showMainMenu(msg.chat.id, userId);
+        }
     }
 });
 
@@ -143,10 +160,6 @@ bot.on('message', async (msg) => {
         logActivity(`Received text message from ${userId} potentially for config name: "${msg.text}"`);
         await userFlow.handleConfigNameInput(msg);
     } 
-    else if (user && user.state && user.state.action === 'awaiting_owner') {
-        logActivity(`Received text message from ${userId} potentially for owner name: "${msg.text}"`);
-        await userFlow.handleConfigOwnerInput(msg, false);
-    }
     else if (user && user.state && user.state.action === 'awaiting_feedback') {
         logActivity(`Received text message from ${userId} for feedback: "${msg.text}"`);
         await userFlow.handleFeedbackInput(msg);
@@ -186,6 +199,10 @@ bot.on('webhook_error', (error) => {
     console.error('Webhook error:', error.message);
     logActivity(`Webhook error: ${error.name} - ${error.message}`);
 });
+
+export function getBotUsername() {
+    return botUsername;
+}
 
 const exit = (reason: string) => {
     logActivity('Bot shutting down (SIGTERM)...');
