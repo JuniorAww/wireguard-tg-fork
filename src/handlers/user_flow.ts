@@ -1,5 +1,6 @@
 import TelegramBot, { InlineKeyboardButton } from 'node-telegram-bot-api';
 import { getWgConnectionInfo, getTotalBandwidthUsage, lastHourUsage, hourlyUsageHistory, getMonthlyUsage } from '$/api/connections';
+import { getBotUsername } from '$/bot';
 import { handleAdminViewConfig, handleAdminListAllConfigs } from '$/handlers/admin_flow'
 import { User, Device, UserConfig, DailyUsage, AppConfig, Subnet } from '$/db/types';
 import { getUsageText, escapeConfigName } from '$/utils/text'
@@ -9,6 +10,7 @@ import * as wgAPI from '$/api/wg_easy_api';
 import { isMediaCached } from '$/utils/images';
 import { getAllowedIPs, sourceEval } from '$/utils/ips';
 import * as db from '$/db/index';
+import { randomBytes } from 'crypto';
 import path from 'path';
 import fs from 'node:fs';
 
@@ -39,10 +41,11 @@ export async function handleStart(msg: TelegramBot.Message) {
         }
     }
     
-    if (user.hasAccess || user.configs?.length) {
+    const hasSharedConfigs = db.getAllConfigs().some(c => c.sharedWith === userId);
+
+    if (user.hasAccess || user.configs?.length || hasSharedConfigs) {
         await showMainMenu(chatId, userId);
-    }
-    else {
+    } else {
         const request = db.getAccessRequest(userId);
         if (request) {
             await botInstance.sendMessage(chatId, "Ваш запрос на доступ уже отправлен и ожидает рассмотрения администратором.");
@@ -57,6 +60,47 @@ export async function handleStart(msg: TelegramBot.Message) {
         }
     }
 }
+
+export async function handleStartWithToken(msg: TelegramBot.Message, token: string): Promise<boolean> {
+    const ownershipToken = db.getOwnershipToken(token);
+    if (ownershipToken) {
+        const newOwnerId = msg.from!.id;
+        const newOwnerUsername = msg.from?.username || `${msg.from?.first_name} ${msg.from?.last_name || ''}`.trim();
+
+        db.ensureUser(newOwnerId, newOwnerUsername);
+        
+        if (newOwnerId === ownershipToken.creatorId) {
+            await botInstance.sendMessage(newOwnerId, "Вы не можете использовать собственную пригласительную ссылку.");
+            return true;
+        }
+
+        const creator = db.getUser(ownershipToken.creatorId);
+        if (!creator) {
+            await botInstance.sendMessage(msg.chat.id, "⚠️ Владелец конфигурации не найден. Ссылка больше не действительна.");
+            db.removeOwnershipToken(token);
+            return true;
+        }
+        
+        const config = creator.configs.find(c => c.userGivenName === ownershipToken.configName && c.deviceId === ownershipToken.deviceId);
+        if (!config) {
+            await botInstance.sendMessage(msg.chat.id, "⚠️ Конфигурация, связанная с этой ссылкой, не найдена. Возможно, она была удалена.");
+            db.removeOwnershipToken(token);
+            return true;
+        }
+
+        config.sharedWith = newOwnerId;
+        db.updateUser(creator.id, { configs: creator.configs });
+
+        await botInstance.sendMessage(newOwnerId, `✅ Вы получили доступ к конфигурации "${config.userGivenName}".`);
+        await botInstance.sendMessage(ownershipToken.creatorId, `Пользователь @${newOwnerUsername} (ID: ${newOwnerId}) активировал вашу ссылку и получил доступ к конфигурации "${config.userGivenName}".`);
+        db.removeOwnershipToken(token);
+        await showMainMenu(newOwnerId, newOwnerId);
+        return true;
+    }
+    await botInstance.sendMessage(msg.chat.id, "⚠️ Ссылка для получения конфигурации недействительна или уже была использована.");
+    return false;
+}
+
 
 function getMainKeyboard(canCreateConfigs: boolean, isAdmin: boolean): InlineKeyboardButton[][] {
     const merge = canCreateConfigs || isAdmin;
@@ -255,72 +299,69 @@ export async function handleConfigNameInput(msg: TelegramBot.Message) {
     }
     
     const reply = await botInstance.sendMessage(chatId, 
-      "Теперь вы можете выбрать <b>владельца конфига</b> (если конфиг предназначен другому человеку)"
-    + "\nДля этого перешлите любое сообщение от владельца в этот диалог (аккаунт не должен быть приватным!)", {
+      `✅ Имя конфигурации: "<b>${configName}</b>".\n\nТеперь выберите, кому будет принадлежать эта конфигурация.`, {
         parse_mode: 'HTML',
         reply_markup: {
             inline_keyboard: [
-                [{ text: "➖ Пропустить шаг", callback_data: "config_owner_skip" }],
+                [{ text: "👤 Это для меня", callback_data: "config_owner_self" }],
+                [{ text: "🔗 Сгенерировать ссылку для другого", callback_data: "config_owner_link" }],
                 [{ text: "⬅️ Отмена и назад в меню", callback_data: "user_main_menu" }]
             ]
         },
     });
     
-    db.updateUser(userId, { state: { action: 'awaiting_owner', 
+    db.updateUser(userId, { state: { action: 'selecting_owner', 
                  data: { ...user.state.data, configName }, messageId: reply.message_id } });
 }
 
-export async function handleConfigOwnerInput(msg: TelegramBot.Message, skip: boolean, inline: boolean = false) {
-    const chatId = msg.chat.id;
-    const userId = inline ? chatId : msg.from!.id;
-    
-    let ownerId: number;
-    let ownerDisplay: string;
-    
-    if (skip) {
-        ownerId = +userId;
-        ownerDisplay = msg.chat.first_name + ' (вы)';
-    }
-    else {
-        if (!msg.forward_from?.id) {
-            await botInstance.sendMessage(chatId, "Пожалуйста, перешлите сообщение от пользователя, на которого хотите повесить конфиг!");
-            return;
-        }
-        
-        ownerId = msg.forward_from.id;
-        ownerDisplay = msg.forward_from.first_name;
-    }
-    
+export async function handleAssignConfigToSelf(chatId: number, userId: number, messageId: number) {
     const user = db.getUser(userId);
-    if (!user) return;
-    
-    const { configName, deviceId } = user.state?.data || {};
-    
-    if (!user || !user.state || user.state.action !== 'awaiting_owner'
-     || !configName || !deviceId) {
-        await botInstance.sendMessage(chatId, "Произошла ошибка или вы не завершили предыдущее действие. Пожалуйста, начните заново с /start.");
+    if (!user || !user.state || user.state.action !== 'selecting_owner' || !user.state.data) {
+        await botInstance.sendMessage(chatId, "Произошла ошибка. Пожалуйста, начните заново.");
         db.updateUser(userId, { state: undefined });
         return;
     }
-    
-    const deviceToShow = devices.find(d => d.id === deviceId);
-    if (deviceToShow) {
-        botInstance.editMessageText(`<b>Выбранное устройство:</b> ${deviceToShow.name}`
-                                  + `\n<b>Имя конфига:</b> ${configName}`
-                                  + `\n<b>Владелец:</b> ID ${ownerDisplay}`, {
-            reply_markup: {
-                inline_keyboard: [[{ text: "✅ Завершено", callback_data: "noop" }]]
-            },
-            parse_mode: 'HTML',
-            chat_id: chatId,
-            message_id: user.state?.messageId, 
-        });
-    }
-    
-    await createConfig(user, ownerId, chatId, configName, deviceId, ownerId);
+    const { configName, deviceId } = user.state.data;
+    await createConfig(userId, userId, configName, deviceId, userId, true);
+    await botInstance.editMessageText(`✅ Конфигурация "<b>${configName}</b>" создана и добавлена в ваш список.`, {
+        chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]] }
+    });
+    db.updateUser(userId, { state: undefined });
 }
 
-async function createConfig(user: User, userId: number, chatId: number, configName: string, deviceId: string, ownerId: number) {
+export async function handleGenerateOwnershipLink(chatId: number, userId: number, messageId: number) {
+    const user = db.getUser(userId);
+    if (!user || !user.state || user.state.action !== 'selecting_owner' || !user.state.data) {
+        await botInstance.sendMessage(chatId, "Произошла ошибка. Пожалуйста, начните заново.");
+        db.updateUser(userId, { state: undefined });
+        return;
+    }
+    const { configName, deviceId } = user.state.data;
+    const token = randomBytes(16).toString('hex');
+
+    const botUsername = getBotUsername();
+    const link = `https://t.me/${botUsername}?start=${token}`;
+
+    await botInstance.editMessageText(`✅ <b>Ссылка для передачи конфигурации создана.</b>\n\nОтправьте эту ссылку человеку, которому предназначен конфиг. Ссылка одноразовая.\n\n<code>${link}</code>`, {
+        chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]] }
+    });
+    
+    // Создаем конфиг сразу, чтобы ссылка была на уже существующий
+    await createConfig(userId, userId, configName, deviceId, userId, true);
+    
+    db.addOwnershipToken({
+        token,
+        creatorId: userId,
+        configName,
+        deviceId, // Используем для поиска конфига
+        createdAt: new Date().toISOString()
+    });
+    db.updateUser(userId, { state: undefined });
+}
+
+async function createConfig(creatorId: number, chatId: number, configName: string, deviceId: string, ownerId: number, silent: boolean = false) {
     const wgClientName = `user${ownerId}_${deviceId}_${Date.now()}`;
     
     const { message_id: savedMessageId } = await botInstance.sendMessage(chatId, `🔄 Создаю конфигурацию "${configName}" для устройства... Пожалуйста, подождите!`);
@@ -340,7 +381,7 @@ async function createConfig(user: User, userId: number, chatId: number, configNa
         const owner: User = db.ensureUser(ownerId);
         
         const userConfig: UserConfig = {
-            creator: userId,
+            creator: creatorId,
             userGivenName: configName,
             wgEasyClientId: newClient.id,
             deviceId: deviceId,
@@ -351,62 +392,74 @@ async function createConfig(user: User, userId: number, chatId: number, configNa
         owner.configs.push(userConfig);
         db.updateUser(ownerId, { configs: owner.configs, state: undefined });
         
-        logActivity(`User ${userId} created config for ${ownerId}: ${configName} (wgID: ${newClient.id})`);
-        await botInstance.editMessageText(`✅ Конфигурация "${configName}" успешно создана!`, {
-            chat_id: chatId,
-            message_id: savedMessageId
-        });
-
-        const configFileContent = await wgAPI.getClientConfiguration(newClient.id);
-        if (typeof configFileContent === 'string' && configFileContent.length > 0) {
-            await botInstance.sendDocument(chatId, Buffer.from(configFileContent), {
-                caption: `📦 Файл конфигурации для "${configName}"`,
-            }, {
-                filename: `${escapeConfigName(configName)}.conf`,
-                contentType: 'text/plain',
+        if (!silent) {
+            logActivity(`User ${creatorId} created config for ${ownerId}: ${configName} (wgID: ${newClient.id})`);
+            await botInstance.editMessageText(`✅ Конфигурация "${configName}" успешно создана!`, {
+                chat_id: chatId,
+                message_id: savedMessageId
             });
-        } else {
-            logActivity(`Failed to get config file content for ${newClient.id} in handleConfigNameInput. Content: ${configFileContent}`);
-            await botInstance.sendMessage(chatId, "📦 Не удалось получить файл конфигурации.");
-        }
+        } else await botInstance.deleteMessage(chatId, savedMessageId);
+
+        // const configFileContent = await wgAPI.getClientConfiguration(newClient.id);
+        // if (typeof configFileContent === 'string' && configFileContent.length > 0) {
+        //     await botInstance.sendDocument(chatId, Buffer.from(configFileContent), {
+        //         caption: `📦 Файл конфигурации для "${configName}"`,
+        //     }, {
+        //         filename: `${escapeConfigName(configName)}.conf`,
+        //         contentType: 'text/plain',
+        //     });
+        // } else {
+        //     logActivity(`Failed to get config file content for ${newClient.id} in handleConfigNameInput. Content: ${configFileContent}`);
+        //     await botInstance.sendMessage(chatId, "📦 Не удалось получить файл конфигурации.");
+        // }
+        // 
+        // // Отправка QR-кода
+        // const qrCodeBuffer = await wgAPI.getClientQrCodeSvg(newClient.id);
+        // if (qrCodeBuffer instanceof Buffer && qrCodeBuffer.length > 0) {
+        //     logActivity(`Attempting to send QR code photo (PNG) for ${newClient.id}. Buffer length: ${qrCodeBuffer.length}`);
+        //     await botInstance.sendPhoto(chatId, qrCodeBuffer, {
+        //         caption: `📸 QR-код для "${configName}"`
+        //     }, {});
+        // } else {
+        //     logActivity(`Failed to get QR code buffer for ${newClient.id} in handleConfigNameInput. Buffer: ${qrCodeBuffer}`);
+        //     await botInstance.sendMessage(chatId, "📸 Не удалось получить QR-код.");
+        // }
         
-        // Отправка QR-кода
-        const qrCodeBuffer = await wgAPI.getClientQrCodeSvg(newClient.id);
-        if (qrCodeBuffer instanceof Buffer && qrCodeBuffer.length > 0) {
-            logActivity(`Attempting to send QR code photo (PNG) for ${newClient.id}. Buffer length: ${qrCodeBuffer.length}`);
-            await botInstance.sendPhoto(chatId, qrCodeBuffer, {
-                caption: `📸 QR-код для "${configName}"`
-            }, {});
-        } else {
-            logActivity(`Failed to get QR code buffer for ${newClient.id} in handleConfigNameInput. Buffer: ${qrCodeBuffer}`);
-            await botInstance.sendMessage(chatId, "📸 Не удалось получить QR-код.");
-        }
-        
-        await showMainMenu(chatId, userId, undefined);
+        if (chatId === creatorId && !silent) await showMainMenu(chatId, creatorId, undefined);
     } catch (error : any) {
         console.error("Error in config creation flow:", error);
         logActivity(`Error creating config for user ${ownerId}: ${error}`);
-        await botInstance.sendMessage(chatId, "Произошла ошибка при создании конфигурации. Пожалуйста, попробуйте позже.");
-        db.updateUser(userId, { state: undefined });
+        await botInstance.sendMessage(chatId, "Произошла критическая ошибка при создании конфигурации. Пожалуйста, попробуйте позже.");
+        db.updateUser(creatorId, { state: undefined });
     }
 }
 
 
 export async function handleListMyConfigs(chatId: number, userId: number, messageId: number, page: number) {
-    const user = db.getUser(userId);
-    if (!user || !user.hasAccess && !user.configs.length) {
+    let user = db.getUser(userId);
+    const hasSharedConfigs = db.getAllConfigs().some(c => c.sharedWith === userId);
+
+    if (!user || (!user.hasAccess && !user.configs.length && !hasSharedConfigs)) {
         await botInstance.sendMessage(chatId, "У вас нет доступа или конфигураций.");
         return;
     }
     
+    // Собираем все конфиги: и свои, и расшаренные
+    const ownedConfigs = user.configs.map(c => ({ ...c, ownerId: user!.id, isOwner: true }));
+    const sharedConfigs = db.getAllConfigs()
+        .filter(c => c.sharedWith === userId)
+        .map(c => ({ ...c, isOwner: false }));
+
+    const allVisibleConfigs = [...ownedConfigs, ...sharedConfigs];
+
     const inline_keyboard: InlineKeyboardButton[][] = [
-		[{ text: "⬅️ Назад в меню", callback_data: "user_main_menu" }]
+        [{ text: "⬅️ Назад в меню", callback_data: "user_main_menu" }]
     ];
     
     if (user.hasAccess) inline_keyboard.unshift([{ text: "➕ Создать новую", callback_data: "create_wg_config_start" }])
     
-    const configs = user.configs;
-    if (configs.length === 0) {
+    // Проверяем общее количество видимых конфигов
+    if (allVisibleConfigs.length === 0) {
         // @ts-ignore
         await botInstance.sendCachedMedia(chatId, messageId, {
             media: "config_list.png",
@@ -424,12 +477,12 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
 	}
 
     const ITEMS_PER_PAGE = 10;
-    const totalPages = Math.ceil(configs.length / ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(allVisibleConfigs.length / ITEMS_PER_PAGE);
     const currentPage = Math.max(0, Math.min(page, totalPages - 1));
     
     const startIndex = currentPage * ITEMS_PER_PAGE;
     const endIndex = startIndex + ITEMS_PER_PAGE;
-    const pageConfigs = configs.slice(startIndex, endIndex);
+    const pageConfigs = allVisibleConfigs.slice(startIndex, endIndex);
     
     let caption = `📄 <b>Ваши конфигурации</b> (Страница ${currentPage + 1}/${totalPages}):\n\n`;
     
@@ -440,7 +493,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     
     pageConfigs.forEach((config, index) => {
         const globalIndex = startIndex + index;
-        const deviceName = devices.find(d => d.id === config.deviceId)?.name || 'Неизвестное устройство';
+        const deviceName = devices.find(d => d.id === config.deviceId)?.name || '...';
         
         const connectionInfo = getWgConnectionInfo(config.wgEasyClientId);
         
@@ -454,9 +507,10 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
         const symbol = !config.isEnabled ? '❌' : usedLastDay ? '✅' : '💤';
         
         const totalTraffic = (config.totalTx || 0) + (config.totalRx || 0);
-        caption += `<b>${globalIndex + 1}.</b> ${symbol} ${config.userGivenName} (${deviceName}, трафик: ${getUsageText(totalTraffic)})\n`;
+        const ownerPrefix = config.isOwner ? '' : '🤝 ';
+        caption += `<b>${globalIndex + 1}.</b> ${symbol} ${ownerPrefix}${config.userGivenName} (${deviceName}, трафик: ${getUsageText(totalTraffic)})\n`;
         
-        const button = { text: `${config.userGivenName}`, callback_data: `view_config_${config.wgEasyClientId}` }
+        const button = { text: `${ownerPrefix}${config.userGivenName}`, callback_data: `view_config_${config.ownerId}_${config.wgEasyClientId}` }
         const userGivenLength = config.userGivenName.length
         
         /* Группируем кнопки в одну строчку */
@@ -478,7 +532,7 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     insert(currentRow);
     
     /* Немного статистики */
-    const [ totalRx, totalTx ] = getTotalBandwidthUsage(configs)
+    const [ totalRx, totalTx ] = getTotalBandwidthUsage(allVisibleConfigs)
     caption += `\n📊 Всего скачано ${getUsageText(totalTx)}, отправлено ${getUsageText(totalRx)}`
     
     const paginationButtons: InlineKeyboardButton[] = [];
@@ -515,14 +569,14 @@ export async function handleListMyConfigs(chatId: number, userId: number, messag
     }
 }
 
-export async function handleViewConfig(chatId: number, userId: number, messageId: number, wgEasyClientId: string) {
-    const user = db.getUser(userId);
-    if (!user) return;
+export async function handleViewConfig(chatId: number, currentUserId: number, messageId: number, ownerId: number, wgEasyClientId: string) {
+    const owner = db.getUser(ownerId);
+    if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
 
-    const config = user.configs.find(c => c.wgEasyClientId === wgEasyClientId);
+    const config = owner.configs.find(c => c.wgEasyClientId === wgEasyClientId);
     if (!config) {
         await botInstance.sendMessage(chatId, "Конфигурация не найдена.");
-        await handleListMyConfigs(chatId, userId, messageId, 0);
+        await handleListMyConfigs(chatId, currentUserId, messageId, 0);
         return;
     }
 
@@ -544,30 +598,45 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
         }
         const status = !config.isEnabled ? '❌ Отключен' : usedLastDay ? '✅ Активен' : `💤 Не использовался 24 часа`;
         
+        const isOwner = owner.id === currentUserId;
+        const ownerIdentifier = isOwner ? "Вы" : (owner.username ? `@${owner.username}` : `ID ${owner.id}`);
+
         let text = `ℹ️ <b>Детали конфигурации:</b>\n\n`;
         text += `<b>Имя:</b> ${config.userGivenName}\n`;
         text += `<b>Устройство:</b> ${deviceName}\n`;
+        text += `<b>Владелец:</b> ${ownerIdentifier}\n`;
         text += `<b>Создан:</b> ${creationDate}\n`;
         text += `<b>Статус:</b> ${status}\n`;
         text += `<b>Трафик:</b> ${bandwidth}\n`
         text += `<b>ID (wg-easy):</b> ${config.wgEasyClientId}`;
 
+        const callbackPrefix = `ca_${ownerId}_${wgEasyClientId}`;
+
         const inline_keyboard: InlineKeyboardButton[][] = [
             [
-                { text: "📥 Скачать (.conf)", callback_data: `config_file_${wgEasyClientId} open 0` },
-                { text: "📱 QR-код", callback_data: `qr_config_${wgEasyClientId}` }
+                { text: "📥 Скачать (.conf)", callback_data: `cf_${ownerId}_${wgEasyClientId} open 0` },
+                { text: "📱 QR-код", callback_data: `${callbackPrefix}_qr` }
             ],
             [
                 config.isEnabled
-                    ? { text: "🚫 Отключить", callback_data: `disable_config_${wgEasyClientId}` }
-                    : { text: "▶️ Включить", callback_data: `enable_config_${wgEasyClientId}` }
+                    ? { text: "🚫 Отключить", callback_data: `${callbackPrefix}_d` }
+                    : { text: "▶️ Включить", callback_data: `${callbackPrefix}_e` } // eslint-disable-line
             ],
-            [
-                { text: "🗑 Удалить", callback_data: `delete_config_ask_${wgEasyClientId}` }
-            ],
-            [{ text: "⬅️ К списку конфигов", callback_data: `list_my_configs_page_0` }],
-            [{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]
         ];
+
+        if (isOwner) {
+            if (config.sharedWith) {
+                const sharedUser = db.getUser(config.sharedWith);
+                const sharedUserIdentifier = sharedUser?.username ? `@${sharedUser.username}` : `ID ${config.sharedWith}`;
+                inline_keyboard.push([{ text: `🚫 Забрать у ${sharedUserIdentifier}`, callback_data: `${callbackPrefix}_r` }]);
+            } else {
+                inline_keyboard.push([{ text: "🔗 Поделиться", callback_data: `${callbackPrefix}_s` }]);
+            }
+            
+            inline_keyboard.push([{ text: "🗑 Удалить", callback_data: `${callbackPrefix}_da` }]);
+        }
+        inline_keyboard.push([{ text: "⬅️ К списку конфигов", callback_data: `list_my_configs_page_0` }]);
+        inline_keyboard.push([{ text: "⬅️ Главное меню", callback_data: "user_main_menu" }]);
         
         async function getMediaFunction() {
             if (config === undefined) return "empty.png";
@@ -593,27 +662,28 @@ export async function handleViewConfig(chatId: number, userId: number, messageId
     }
 }
 
-export async function handleConfigFile(chatId: number, userId: number, messageId: number, wgEasyClientId: string, action: string, currentPage: number) {
-    const user = db.getUser(userId);
-    if (!user) return;
+export async function handleConfigFile(chatId: number, currentUserId: number, messageId: number, ownerId: number, wgEasyClientId: string, action: string, currentPage: number) {
+    const owner = db.getUser(ownerId);
+    if (!owner) { await botInstance.sendMessage(chatId, "Владелец не найден."); return; }
     
-    const configIndex = user.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
+    const configIndex = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
     
     if (configIndex === -1) {
         await botInstance.sendMessage(chatId, "❓ Конфигурация не найдена.");
         return;
     }
     
-    const config = user.configs[configIndex];
+    const config = owner.configs[configIndex];
+    const userForSubnets = db.getUser(currentUserId)!; // Используем текущего юзера для его настроек сабнетов
     
     const allSubnets: Record<string, Subnet> = db.getSubnets();
     const allExistingKeys = Object.keys(allSubnets);
-    Object.keys(user.subnets).forEach(subnetId => {
-        if (!allExistingKeys.includes(subnetId)) delete user.subnets[subnetId];
+    Object.keys(userForSubnets.subnets).forEach(subnetId => {
+        if (!allExistingKeys.includes(subnetId)) delete userForSubnets.subnets[subnetId];
     })
     // TODO do updateUser
     
-    async function show(user: User) {
+    async function show(user: User, ownerId: number) {
         let caption = `📥 <b>Настройка AllowedIPs</b>`
                    + `\nЗдесь вы можете указать, какой трафик будет проходить через VPN.`
                    + `\n\nРежим «Только плюсы» (➕): через VPN пойдёт только трафик к выбранным сервисам. Остальной — напрямую.`
@@ -631,7 +701,7 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
 				const status = user.subnets[subnetId]; // undefined, true, false
 				const emoji = status === undefined ? '✖' : status ? '➕' : '➖';
 				
-				subButtons.unshift({ text: `${emoji} ${subnet.name}`, callback_data: `config_file_${wgEasyClientId} swap-${subnetId} ${currentPage}` });
+				subButtons.unshift({ text: `${emoji} ${subnet.name}`, callback_data: `cf_${ownerId}_${wgEasyClientId} swap-${subnetId} ${currentPage}` });
 			});
         
         for (let i = 0; i < subButtons.length; i += 2) {
@@ -644,15 +714,15 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
         
 		const paginationButtons: InlineKeyboardButton[] = [];
         if (currentPage > 0)
-			paginationButtons.push({ text: "⬅️", callback_data: `config_file_${wgEasyClientId} open ${currentPage - 1}` });
+			paginationButtons.push({ text: "⬅️", callback_data: `cf_${ownerId}_${wgEasyClientId} open ${currentPage - 1}` });
 		if (totalPages > 1)
 			paginationButtons.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: `noop ${Math.random()}` }); // UPD: изредка бывают ошибки "markup wasn't changed", здесь фикс
 		if (currentPage < totalPages - 1)
-			paginationButtons.push({ text: "➡️", callback_data: `config_file_${wgEasyClientId} open ${currentPage + 1}` });
+			paginationButtons.push({ text: "➡️", callback_data: `cf_${ownerId}_${wgEasyClientId} open ${currentPage + 1}` });
 		
         inline_keyboard.push(paginationButtons);
-        inline_keyboard.push([{ text: "✅ Получить конфиг", callback_data: `config_file_${wgEasyClientId} get` }]);
-        inline_keyboard.push([{ text: "⬅️ Вернуться", callback_data: `view_config_${wgEasyClientId}` }]);
+        inline_keyboard.push([{ text: "✅ Получить конфиг", callback_data: `cf_${ownerId}_${wgEasyClientId} get` }]);
+        inline_keyboard.push([{ text: "⬅️ Вернуться", callback_data: `view_config_${ownerId}_${wgEasyClientId}` }]);
 		
         // @ts-ignore
 		await botInstance.sendCachedMedia(chatId, messageId, {
@@ -668,12 +738,12 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
         if (action === 'get') {
             let fileContent = await wgAPI.getClientConfiguration(wgEasyClientId);
             if (typeof fileContent === 'string' && fileContent.length > 0) {
-                const subnetKeys = Object.keys(user.subnets);
+                const subnetKeys = Object.keys(userForSubnets.subnets);
                 
                 let prefix = "";
                 
                 if (subnetKeys.length !== 0) {
-                    const subnets: [string, boolean][] = Object.entries(user.subnets);
+                    const subnets: [string, boolean][] = Object.entries(userForSubnets.subnets);
                     
                     let allowed: string[] = [];
                     let blocked: string[] = [];
@@ -712,12 +782,12 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
                     }
                 }
                 
-                await handleViewConfig(chatId, userId, messageId, wgEasyClientId);
+                await handleViewConfig(chatId, currentUserId, messageId, ownerId, wgEasyClientId);
                 await botInstance.sendDocument(chatId, Buffer.from(fileContent), {}, {
                     filename: `${escapeConfigName(config.userGivenName)}${prefix}.conf`,
                     contentType: 'text/plain'
                 });
-                logActivity(`User ${userId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);
+                logActivity(`User ${currentUserId} downloaded config ${config.userGivenName} (ID: ${wgEasyClientId})`);
             } else {
                 logActivity(`Failed to get config file content for ${wgEasyClientId} in handleConfigAction (dl_config). Content: ${fileContent}`);
                 await botInstance.sendMessage(chatId, "Не удалось получить файл конфигурации.");
@@ -726,109 +796,192 @@ export async function handleConfigFile(chatId: number, userId: number, messageId
         else if (action?.startsWith('swap')) {
             const subnet: number = +action.split('-')[1];
             
-            const entry: boolean = user.subnets[subnet];
+            const entry: boolean = userForSubnets.subnets[subnet];
             
-            if (entry === undefined) user.subnets[subnet] = true;
-            else if (entry === true) user.subnets[subnet] = false;
-            else delete user.subnets[subnet];
+            if (entry === undefined) userForSubnets.subnets[subnet] = true;
+            else if (entry === true) userForSubnets.subnets[subnet] = false;
+            else delete userForSubnets.subnets[subnet];
             
-            db.updateUser(userId, { subnets: user.subnets });
+            db.updateUser(currentUserId, { subnets: userForSubnets.subnets });
             
-            await show(user);
+            await show(userForSubnets, ownerId);
         }
         else if (action === 'open') {
-            await show(user);
+            await show(userForSubnets, ownerId);
         }
-    } catch (e) {
+    } catch (e: any) {
         console.log('Ошибка', e);
         await botInstance.sendMessage(chatId, "Произошла неизвестная ошибка.");
     }
 }
 
-export async function handleConfigAction(chatId: number, userId: number, messageId: number, action: string, wgEasyClientId: string, isAdminAction: boolean = false) {
-    const user = db.getUser(userId);
-    if (!user) return;
+export async function handleConfigAction(chatId: number, currentUserId: number, messageId: number, action: string, ownerId: number, wgEasyClientId: string, callbackQueryId: string, isAdminAction: boolean = false) {
+    const owner = db.getUser(ownerId);
+    if (!owner) { await botInstance.sendMessage(chatId, "Владелец конфигурации не найден."); return; }
 
-    const configIndex = user.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
+    const configIndex = owner.configs.findIndex(c => c.wgEasyClientId === wgEasyClientId);
     
     if (configIndex === -1) {
         await botInstance.sendMessage(chatId, "❓ Конфигурация не найдена.");
         return;
     }
-    const config = user.configs[configIndex];
+    const config = owner.configs[configIndex];
 
     try {
         const refreshView = async () => {
             if (isAdminAction) {
-                await handleAdminViewConfig(chatId, userId, messageId, wgEasyClientId);
+                await handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
             } else {
-                await handleViewConfig(chatId, userId, messageId, wgEasyClientId);
+                await handleViewConfig(chatId, currentUserId, messageId, ownerId, wgEasyClientId);
             }
         };
         switch (action) {
-            case 'qr_config':
+            case 'qr':
                 const qrBuffer = await wgAPI.getClientQrCodeSvg(wgEasyClientId);
                 if (qrBuffer instanceof Buffer && qrBuffer.length > 0) {
                     logActivity(`Attempting to send QR code photo (PNG) for config ${wgEasyClientId}. Buffer length: ${qrBuffer.length}`);
                     await botInstance.sendPhoto(chatId, qrBuffer, {
                         caption: `QR-код для ${config.userGivenName}`
                     }, {});
-                    logActivity(`User ${userId} requested QR photo (PNG) for config ${config.userGivenName} (ID: ${wgEasyClientId})`);
+                    logActivity(`User ${currentUserId} requested QR photo (PNG) for config ${config.userGivenName} (ID: ${wgEasyClientId})`);
                 } else {
                     logActivity(`Failed to get QR code buffer for ${wgEasyClientId} in handleConfigAction (qr_config). Buffer: ${qrBuffer}`);
                     await botInstance.sendMessage(chatId, "Не удалось получить QR-код.");
                 }
                 break;
-            case 'disable_config':
+            case 'd':
                 if (await wgAPI.disableWgClient(wgEasyClientId)) {
-                    user.configs[configIndex].isEnabled = false;
-                    db.updateUser(userId, { configs: user.configs });
+                    owner.configs[configIndex].isEnabled = false;
+                    db.updateUser(ownerId, { configs: owner.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" отключена.` }); // callback_query_handler
-                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} disabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} disabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${ownerId}`);
                     await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось отключить конфигурацию.");
                 }
                 break;
-            case 'enable_config':
+            case 'e':
                 if (await wgAPI.enableWgClient(wgEasyClientId)) {
-                    user.configs[configIndex].isEnabled = true;
-                    db.updateUser(userId, { configs: user.configs });
+                    owner.configs[configIndex].isEnabled = true;
+                    db.updateUser(ownerId, { configs: owner.configs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" включена.` }); // callback_query_handler
-                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} enabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${userId}`);
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} enabled config ${config.userGivenName} (ID: ${wgEasyClientId}) for user ${ownerId}`);
                     await refreshView();
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось включить конфигурацию.");
                 }
                 break;
-            case 'delete_config_ask':
+            case 'da':
                 await botInstance.sendMessage(chatId, `Вы уверены, что хотите удалить конфигурацию "${config.userGivenName}"? Это действие необратимо.`, {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: "🗑 Да, удалить", callback_data: `${isAdminAction ? 'admin_' : ''}delete_config_confirm_${isAdminAction ? `${userId}_${wgEasyClientId}` : wgEasyClientId}` }],
-                            [{ text: "⬅️ Нет, отмена", callback_data: `del` }],
-                            //[{ text: "⬅️ Нет, отмена", callback_data: `${isAdminAction ? `admin_view_config_${userId}_${wgEasyClientId}` : `view_config_${wgEasyClientId}`}` }],
+                            [{ text: "🗑 Да, удалить", callback_data: `ca_${ownerId}_${wgEasyClientId}_dc` }],
+                            [{ text: "⬅️ Нет, отмена", callback_data: `view_config_${ownerId}_${wgEasyClientId}` }]
                         ]
                     }
                 });
                 break;
-            case 'delete_config_confirm':
+            case 'dc':
                 if (await wgAPI.deleteWgClient(wgEasyClientId)) {
-                    user.configs.splice(configIndex, 1);
-                    db.updateUser(userId, { configs: user.configs });
+                    const sharedWithId = config.sharedWith;
+                    const newConfigs = owner.configs.filter(c => c.wgEasyClientId !== wgEasyClientId);
+                    db.updateUser(ownerId, { configs: newConfigs });
                     // await botInstance.answerCallbackQuery(chatId.toString(), { text: `Конфигурация "${config.userGivenName}" удалена.` }); // callback_query_handler
-                    await botInstance.sendMessage(chatId, `➖ Конфигурация "${config.userGivenName}" удалена.`); // TODO: edit message instead of sending new one
-                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${userId}`);
-                    if (isAdminAction) await handleAdminListAllConfigs(chatId, 0, messageId);
-                    else await handleListMyConfigs(chatId, userId, messageId, 0);
+                    logActivity(`${isAdminAction ? 'Admin' : 'User'} ${chatId} deleted config ${config.userGivenName} (ID: ${wgEasyClientId}) of user ${ownerId}`);
+                    
+                    await botInstance.answerCallbackQuery(callbackQueryId, { text: `Конфигурация "${config.userGivenName}" удалена.` });
+                    if (isAdminAction) {
+                        await botInstance.editMessageCaption(`✅ Конфигурация "${config.userGivenName}" удалена.`, {
+                            chat_id: chatId,
+                            message_id: messageId,
+                            reply_markup: { inline_keyboard: [] }
+                        });
+                        await handleAdminListAllConfigs(chatId, 0, messageId);
+                    } else {
+                        await handleListMyConfigs(chatId, currentUserId, messageId, 0);
+                    }
+
+                    if (sharedWithId) {
+                        const sharedUser = db.getUser(sharedWithId);
+                        if (sharedUser) {
+                            const hasOtherConfigs = sharedUser.configs.length > 0 || db.getAllConfigs().some(c => c.sharedWith === sharedWithId);
+                            if (!sharedUser.hasAccess && !hasOtherConfigs) {
+                                await botInstance.sendMessage(sharedWithId, `Владелец отозвал у вас доступ к конфигурации "${config.userGivenName}".\n\nТак как у вас не осталось других конфигураций, доступ к боту ограничен. Для повторного использования отправьте /start.`, {
+                                    reply_markup: { remove_keyboard: true }
+                                });
+                            } else {
+                                await botInstance.sendMessage(sharedWithId, `Владелец отозвал у вас доступ к конфигурации "${config.userGivenName}".`);
+                            }
+                        }
+                    }
                 } else {
                     await botInstance.sendMessage(chatId, "Не удалось удалить конфигурацию.");
                 }
                 break;
+            case 's': // Share
+                if (config.sharedWith) {
+                    await botInstance.answerCallbackQuery(callbackQueryId, { text: "Эта конфигурация уже используется другим пользователем." });
+                    return;
+                }
+
+                const existingToken = db.findOwnershipTokenByConfig(ownerId, config.deviceId, config.userGivenName);
+                let token: string;
+
+                if (existingToken) {
+                    token = existingToken.token;
+                } else {
+                    token = randomBytes(16).toString('hex');
+                    db.addOwnershipToken({
+                        token,
+                        creatorId: ownerId,
+                        configName: config.userGivenName,
+                        deviceId: config.deviceId,
+                        createdAt: new Date().toISOString()
+                    });
+                }
+
+                const botUsername = getBotUsername();
+                const link = `https://t.me/${botUsername}?start=${token}`;
+                await botInstance.editMessageCaption(`✅ <b>Ссылка для передачи конфигурации "${config.userGivenName}" создана.</b>\n\nОтправьте эту ссылку человеку, которому предназначен конфиг. Ссылка одноразовая.\n\n<code>${link}</code>`, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    reply_markup: { inline_keyboard: [[{ text: "⬅️ Вернуться к конфигу", callback_data: `view_config_${ownerId}_${wgEasyClientId}` }]] }
+                });
+                break;
+            case 'r': // Revoke
+                const sharedWithId = config.sharedWith;
+                if (!sharedWithId) {
+                    await botInstance.answerCallbackQuery(callbackQueryId, { text: "Конфигурация ни с кем не используется." });
+                    return;
+                }
+                owner.configs[configIndex].sharedWith = undefined;
+                db.updateUser(ownerId, { configs: owner.configs });
+                logActivity(`User ${currentUserId} revoked access to config ${config.userGivenName} from user ${sharedWithId}`);
+                
+                const existingTokenForRevoked = db.findOwnershipTokenByConfig(ownerId, config.deviceId, config.userGivenName);
+                if (existingTokenForRevoked) {
+                    db.removeOwnershipToken(existingTokenForRevoked.token);
+                }
+
+                await botInstance.answerCallbackQuery(callbackQueryId, { text: "Доступ отозван." });
+                const sharedUser = db.getUser(sharedWithId);
+                if (sharedUser) {
+                    const hasOtherConfigs = sharedUser.configs.length > 0 || db.getAllConfigs().some(c => c.sharedWith === sharedWithId);
+                    if (!sharedUser.hasAccess && !hasOtherConfigs) {
+                        await botInstance.sendMessage(sharedWithId, `Владелец отозвал у вас доступ к конфигурации "${config.userGivenName}".\n\nТак как у вас не осталось других конфигураций, доступ к боту ограничен. Для повторного использования отправьте /start.`, {
+                            reply_markup: { remove_keyboard: true }
+                        });
+                    } else {
+                        await botInstance.sendMessage(sharedWithId, `Владелец отозвал у вас доступ к конфигурации "${config.userGivenName}".`);
+                    }
+                }
+                await refreshView();
+                break;
         }
     } catch (error : any) {
         console.error(`Error processing config action ${action} for ${wgEasyClientId}:`, error);
-        logActivity(`Error in config action ${action} for ${wgEasyClientId} by user ${userId}: ${error}`);
+        logActivity(`Error in config action ${action} for ${wgEasyClientId} by user ${currentUserId}: ${error}`);
         await botInstance.sendMessage(chatId, "Произошла ошибка при выполнении действия.");
     }
 }

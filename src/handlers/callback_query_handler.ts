@@ -35,8 +35,10 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
             return;
         }
         
+        const hasSharedConfigs = db.getAllConfigs().some(c => c.sharedWith === userId);
+
         // Пользовательский флоу (без доступа)
-        if (user.hasAccess || user.configs.length) {
+        if (user.hasAccess || user.configs.length || hasSharedConfigs) {
             if (data === 'user_main_menu') {
                 await userFlow.showMainMenu(chatId, userId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
@@ -59,23 +61,28 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 return;
             }
             if (data.startsWith('view_config_')) {
-                const wgEasyClientId = data.substring('view_config_'.length);
-                await userFlow.handleViewConfig(chatId, userId, messageId, wgEasyClientId);
+                const parts = data.substring('view_config_'.length).split('_');
+                const ownerId = parseInt(parts[0], 10);
+                const wgEasyClientId = parts[1];
+                await userFlow.handleViewConfig(chatId, userId, messageId, ownerId, wgEasyClientId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
-            if (data.startsWith('config_file_')) {
-                const [ wgEasyClientId, action, page ] = data.substring('config_file_'.length).split(' ');
-                await userFlow.handleConfigFile(chatId, userId, messageId, wgEasyClientId, action, parseInt(page, 10));
+            if (data.startsWith('cf_')) {
+                const parts = data.substring('cf_'.length).split(' ');
+                const [ownerIdStr, wgEasyClientId, action, pageStr] = parts[0].split('_').concat(parts.slice(1));
+                const ownerId = parseInt(ownerIdStr, 10);
+                await userFlow.handleConfigFile(chatId, userId, messageId, ownerId, wgEasyClientId, action, parseInt(pageStr, 10));
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
-            const configActionMatch = data.match(/^(qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm)_(.+)$/);
+            const configActionMatch = data.match(/^ca_(\d+)_([0-9a-fA-F-]+)_(qr|d|e|da|dc|s|r)$/);
             if (configActionMatch) {
-                const action = configActionMatch[1];
+                const ownerId = parseInt(configActionMatch[1], 10);
                 const wgEasyClientId = configActionMatch[2];
-                await userFlow.handleConfigAction(chatId, userId, messageId, action, wgEasyClientId);
-                const actionsThatAnswerInternally = ['delete_config_ask'];
+                const action = configActionMatch[3];
+                await userFlow.handleConfigAction(chatId, userId, messageId, action, ownerId, wgEasyClientId, query.id);
+                const actionsThatAnswerInternally = ['da'];
                 if (!actionsThatAnswerInternally.includes(action)) {
                     try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
                 }
@@ -96,16 +103,20 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
-            if (data.startsWith('config_owner_skip')) {
-                if (query.message !== undefined)
-                    await userFlow.handleConfigOwnerInput(query.message, true, true);
+            if (data === 'config_owner_self') {
+                await userFlow.handleAssignConfigToSelf(chatId, userId, messageId);
+                await botInstance.answerCallbackQuery(query.id);
+                return;
+            }
+            if (data === 'config_owner_link') {
+                await userFlow.handleGenerateOwnershipLink(chatId, userId, messageId);
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
         }
 
         // Админский флоу
-        if ((data.startsWith('admin') || data.includes('_access_'))
+        if ((data.startsWith('admin') || data.startsWith('ad_') || data.includes('_access_'))
         && appConfigInstance.adminTelegramIds.includes(userId)
         /*&& db.getUser(userId).role === 2*/) {
             if (data.startsWith('approve_access_')) {
@@ -183,23 +194,24 @@ export async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
                 await botInstance.answerCallbackQuery(query.id);
                 return;
             }
+            if (data.startsWith('ad_vc_')) { // admin_view_config
+                const parts = data.substring('ad_vc_'.length).split('_');
+                const ownerId = parseInt(parts[0]);
+                const wgEasyClientId = parts[1];
+                await adminFlow.handleAdminViewConfig(chatId, ownerId, messageId, wgEasyClientId);
+                await botInstance.answerCallbackQuery(query.id);
+                return;
+            }
             // Действия с конфигом от админа
-            const adminConfigActionMatch = data.match(/^(admin_(?:dl_config|qr_config|disable_config|enable_config|delete_config_ask|delete_config_confirm))_(?:(\d+)_([0-9a-fA-F-]+)|cfg_idx_(\d+))$/);
+            const adminConfigActionMatch = data.match(/^(ad_(?:dl|qr|dis|en|del_a|del_c))_(\d+)_([0-9a-fA-F-]+)$/);
             if (adminConfigActionMatch) {
                 const actionWithPrefix = adminConfigActionMatch[1]; // e.g., admin_dl_config
-                let configIdentifier: string;
-                let ownerId: number;
-                let wgEasyClientId: string;
+                const ownerId = parseInt(adminConfigActionMatch[2], 10);
+                const wgEasyClientId = adminConfigActionMatch[3];
 
-                if (adminConfigActionMatch[4] !== undefined) { // _cfg_idx_
-                    const globalIndex = parseInt(adminConfigActionMatch[4]);
-                    const allConfigs = db.getAllConfigs();
-                    const targetConfig = allConfigs[globalIndex];
-                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${targetConfig.ownerId}_${targetConfig.wgEasyClientId}`, messageId);
-                } else { // ownerId_wgClientId
-                    await adminFlow.handleAdminConfigAction(chatId, actionWithPrefix, `${adminConfigActionMatch[2]}_${adminConfigActionMatch[3]}`, messageId);
-                }
-                if (!actionWithPrefix.endsWith('_ask')) {
+                await adminFlow.handleAdminConfigAction(chatId, userId, actionWithPrefix, ownerId, wgEasyClientId, messageId, query.id);
+
+                if (!actionWithPrefix.endsWith('_a')) { // Не отвечаем на _ask
                     try { await botInstance.answerCallbackQuery(query.id); } catch (e) { /* Игнорируем ошибку */ }
                 }
                 return;

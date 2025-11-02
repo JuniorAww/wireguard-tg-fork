@@ -21,6 +21,7 @@ export interface UserConfig {
     lastKnownRx?: number;
     lastKnownTx?: number;
     latestHandshakeAt?: string | null;
+    sharedWith?: number;
     dailyUsage?: DailyUsage[];
 }
 
@@ -63,9 +64,17 @@ export interface AccessRequest {
 export interface Database {
     users: Record<number, User>;
     accessRequests: Record<number, AccessRequest>; // Ключ - userId
+    configOwnershipTokens: Record<string, ConfigOwnershipToken>;
     subnets: Record<string, Subnet>;
 }
 
+export interface ConfigOwnershipToken {
+    token: string;
+    creatorId: number;
+    configName: string;
+    deviceId: string;
+    createdAt: string; // ISO timestamp
+}
 export interface Subnet {
 	name: string;
 	creator: number; // Telegram ID
